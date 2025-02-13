@@ -1,0 +1,19 @@
+import os
+from yaml import load
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
+
+OPENAI_URL = 'https://api.openai.com/v1'
+OPENAI_KEY = 'your-api-key-here'
+SEND_EMAIL = 'your-email@example.com'
+SEND_EMAIL_PASSWORD = 'your-email-password'
+SEND_EMAIL_SERVER = 'smtp.example.com'
+SEND_EMAIL_PORT = 25
+
+TRACKS = {}
+ARXIV_LIST = []
+
+ARXIV_LIST = load(open("./arxiv_config/arxiv_list.yaml", "r"), Loader=Loader)
+print(ARXIV_LIST) 
