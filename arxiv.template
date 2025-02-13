@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style type="text/css">
+    .paper-section {
+        margin: 20px 0;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-left: 4px solid #702963;
+    }
+    .paper-title {
+        color: #702963;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+    .paper-abstract {
+        color: #333;
+        margin: 10px 0;
+    }
+    .paper-link {
+        color: #0066cc;
+        text-decoration: none;
+    }
+    .paper-importance {
+        background-color: #f0f0f0;
+        padding: 10px;
+        margin: 10px 0;
+        border-left: 3px solid #702963;
+        color: #444;
+    }
+    .all-papers-section {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 2px solid #eee;
+    }
+    .paper-list-item {
+        margin: 10px 0;
+        padding: 5px 0;
+    }
+    .details-section {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 2px solid #eee;
+    }
+</style>
+<script type="text/javascript" async
+  src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML">
+</script>
+<script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    tex2jax: {
+      inlineMath: [['$','$']],
+      displayMath: [['$$','$$']],
+      processEscapes: true
+    }
+  });
+</script>
+</head>
+<body>
+<p>Hi,</p>
+
+{% if papers %}
+{% set top_papers = papers[:3] %}
+{% set other_papers = papers[3:] %}
+
+<h2>Here are top 3 important papers from arxiv today:</h2>
+
+{% for paper in top_papers %}
+<div class="paper-section">
+    <div class="paper-title">{{ paper.title }}</div>
+    <div class="paper-authors">Authors: {{ paper.author_str }}</div>
+    <div class="paper-abstract">Abstract: {{ paper.summary }}</div>
+    <div class="paper-link">From: {{ paper.categories[0] }} <a href="http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}">http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}</a></div>
+    <div class="paper-importance">Why Important: {{ paper.recommendation_reason }}</div>
+</div>
+{% endfor %}
+
+<div class="all-papers-section">
+    <h3>Here are the rest of today's papers:</h3>
+    {% for paper in other_papers %}
+    <div class="paper-section">
+        <div class="paper-title">{{ paper.title }}</div>
+        <div class="paper-authors">Authors: {{ paper.author_str }}</div>
+        <div class="paper-abstract">Abstract: {{ paper.summary }}</div>
+        <div class="paper-link">From: {{ paper.categories[0] }} <a href="http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}">http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}</a></div>
+    </div>
+    {% endfor %}
+</div>
+
+<p>Best regards.</p>
+
+{% else %}
+<p>No papers found today.</p>
+{% endif %}
+
+</body>
+</html>

@@ -1,0 +1,15 @@
+subscriber:
+  # - name: "Shiwei Gao"
+  #   email: "gsw23@mails.tsinghua.edu.cn"
+  # - name: "Huajun Bai"
+  #   email: "bhj24@mails.tsinghua.edu.cn"
+  - name: "Huajun Bai 163"
+    email: "baihuajun24@163.com"
+types: 
+  # - "cs.CL"
+  - "cs.DC"
+  # - "cs.LG"
+  # - "cs.AI"
+  # - "cs.OS"
+  # - "cs.NI"
+  # - "cs.AR"
