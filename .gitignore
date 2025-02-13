@@ -1,3 +1,9 @@
 config.py
 content/
 arxiv_config/arxiv_list.yaml
+
+# Python byte-compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
