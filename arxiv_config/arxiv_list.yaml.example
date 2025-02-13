@@ -1,0 +1,12 @@
+subscriber:
+  - name: "Example User"
+    email: "example@example.com"
+types: 
+  - "cs.DC"
+  # Uncomment and add more categories as needed:
+  # - "cs.CL"
+  # - "cs.LG"
+  # - "cs.AI"
+  # - "cs.OS"
+  # - "cs.NI"
+  # - "cs.AR" 
