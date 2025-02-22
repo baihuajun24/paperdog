@@ -27,7 +27,10 @@ def send_email(papers):
         sender_email = config.SEND_EMAIL
         sender_password = config.SEND_EMAIL_PASSWORD
         receiver_email = subscriber["email"]
-        subject = 'PageDog: New arxiv AI paper today'
+        
+        # Modify the email subject
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        subject = f"PaperDogV1[{current_date}]: New Papers from Arxiv Today"
         
         msg = MIMEMultipart()
         msg['From'] = sender_email
