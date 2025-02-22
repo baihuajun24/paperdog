@@ -9,6 +9,7 @@ daily arxiv paper news feed by email
   - [ ] Generate custom prompts based on subscriber research interests
 - [x] Add Chinese language support for recommendation explanations
 - [ ] Make the code compatible with other LLM APIs 
+- [ ] Some logs/stats in email content to show retreieval numbers: like how many papers in total in arxiv link, how many papers are relevant, and how the top 3 papers are ranked.
 
 ## Update on 20250222
 - Adding crontab

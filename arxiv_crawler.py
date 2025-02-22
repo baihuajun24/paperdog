@@ -89,11 +89,11 @@ def check_gpt(title:str,summary:str, model_name="deepseek-v3-241226"):
     messages=[
         {
             "role": "system",
-            "content": "You are a professional researcher and have read many papers. You are now chatting with a new paper's title and abstract. You must digest the topic well and answer user's questions precisely."
+            "content": config.AGENT_PROMPT
         },
         {
             "role": "user",
-            "content": f"Title: {title}\nAbstract: {summary}\n\nFrom the above information, answer whether this paper is aimed at imporoving Machine Learning systems in terms of improving system throughput or reducing latency; exclude those papers that aim at improving the precision or accuracy. You should only return yes or no! ",
+            "content": config.CLASSIFY_PROMPT.format(title=title, summary=summary)
         }
     ],
     # model="gpt-4o-mini-2024-07-18",
@@ -210,25 +210,15 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     for paper in papers:
         paper_summaries.append(f"Title: {paper.title}\nAbstract: {paper.summary}\nLink: {paper.entry_id}")
     
-    prompt = """Analyze these ML system papers and:
-1. Select the top 3 most significant papers focusing on system performance, efficiency, and scalability
-2. For each selected paper, provide a brief reason for recommendation (1-2 sentences)
-Format your response exactly like this:
-0|This paper is important because it introduces a novel approach to reduce inference latency.
-2|This work stands out for its scalable distributed training solution.
-5|Notable for its memory optimization technique that reduces GPU memory by 50%.
-请以自然流畅的中文，写出你的推荐理由。
-"""
-    
     chat_completion = client.chat.completions.create(
         messages=[
             {
                 "role": "system",
-                "content": "You are a professional ML systems researcher who can identify important papers about system optimization, efficiency improvements, and scalability enhancements."
+                "content": config.AGENT_PROMPT
             },
             {
                 "role": "user",
-                "content": f"{prompt}\n\nPapers:\n" + "\n---\n".join(paper_summaries)
+                "content": f"{config.PROMPT_CHINESE}\n\nPapers:\n" + "\n---\n".join(paper_summaries)
             }
         ],
         # model="gpt-4o-mini-2024-07-18",
