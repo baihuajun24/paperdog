@@ -124,8 +124,8 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
         }
         
         response = session.get(
-            # f"https://arxiv.org/list/{type_name}/recent",
-            f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000",
+            # f"https://arxiv.org/list/{type_name}/recent", # debug use
+            f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000", # deploy use
             headers=headers,
             verify=False,
             timeout=30
@@ -207,8 +207,8 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     
     # Convert papers to a format suitable for GPT
     paper_summaries = []
-    for paper in papers:
-        paper_summaries.append(f"Title: {paper.title}\nAbstract: {paper.summary}\nLink: {paper.entry_id}")
+    for idx, paper in enumerate(papers):
+        paper_summaries.append(f"Paper ID: {idx} Title: {paper.title}\nAbstract: {paper.summary}\nLink: {paper.entry_id}")
     
     chat_completion = client.chat.completions.create(
         messages=[
@@ -218,7 +218,7 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
             },
             {
                 "role": "user",
-                "content": f"{config.PROMPT_CHINESE}\n\nPapers:\n" + "\n---\n".join(paper_summaries)
+                "content": config.PROMPT_CHINESE_AD + "\n\nPapers:\n" + "\n---\n".join(paper_summaries)
             }
         ],
         # model="gpt-4o-mini-2024-07-18",
@@ -229,33 +229,37 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     try:
         # Parse the response to get indices and reasons
         response_lines = chat_completion.choices[0].message.content.strip().split('\n')
-        
+        print(f"[0222DEBUG] Check response lines: {response_lines}")
+
         # Create a list to store all papers
         all_papers = papers.copy()  # Keep a copy of all papers
-        
+
         # Track which papers are in top 3
         top_indices = []
         reasons = []
-        
+
         # Process top 3 selections
-        for line in response_lines[:3]:
-            idx, reason = line.split('|')
-            idx = int(idx.strip())
-            if idx < len(papers):
-                top_indices.append(idx)
-                reasons.append(reason.strip())
-        
+        for i in range(0, len(response_lines), 3):
+            if '|' in response_lines[i]:
+                idx, _ = response_lines[i].split('|', 1)
+                idx = int(idx.strip())
+                if idx < len(papers):
+                    top_indices.append(idx)
+                    if i + 1 < len(response_lines):
+                        reasons.append(response_lines[i + 1].strip().replace('推荐理由：', ''))
+
         # Add recommendation reasons to top papers
         for idx, reason in zip(top_indices, reasons):
             all_papers[idx].recommendation_reason = reason
-        
+
         # Reorder papers to put top 3 first
         top_papers = [all_papers[i] for i in top_indices]
         other_papers = [p for i, p in enumerate(all_papers) if i not in top_indices]
-        
+
         # Return reordered list with top papers first, followed by others
         return top_papers + other_papers
-        
+
+
     except Exception as e:
         print(f"[ERROR] Failed to rank papers: {e}")
         return papers  # Return original papers if ranking fails
