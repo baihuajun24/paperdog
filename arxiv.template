@@ -71,7 +71,7 @@
     <div class="paper-authors">Authors: {{ paper.author_str }}</div>
     <div class="paper-abstract">Abstract: {{ paper.summary }}</div>
     <div class="paper-link">From: {{ paper.categories[0] }} <a href="http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}">http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}</a></div>
-    <div class="paper-importance">Why Important: {{ paper.recommendation_reason }}</div>
+    <div class="paper-importance">推荐理由: {{ paper.recommendation_reason }}</div>
 </div>
 {% endfor %}
 

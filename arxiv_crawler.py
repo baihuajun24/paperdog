@@ -8,6 +8,7 @@ import email
 import datetime
 import os
 import smtplib
+from volcenginesdkarkruntime import Ark
 #CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, PRIMARY KEY (id),UNIQUE (ID))
 def send_email(papers):
     environment = Environment(loader=FileSystemLoader("./"))
@@ -51,12 +52,39 @@ def send_email(papers):
 import openai
 from openai import OpenAI
 
-client = OpenAI(
-    base_url=config.OPENAI_URL,
-    api_key=config.OPENAI_KEY,
+# client = OpenAI(
+#     base_url=config.OPENAI_URL,
+#     api_key=config.OPENAI_KEY,
+# )
+
+client = Ark(
+    base_url=config.ARK_URL,
+    api_key=config.ARK_KEY,
 )
 
-def check_gpt(title:str,summary:str):
+def check_model_response(model_name):
+    # Send a simple query to the model to check its response
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": "Who are you? And who developed you?"
+                }
+            ],
+            model=model_name,
+            max_tokens=30,
+        )
+        response = completion.choices[0].message.content.strip()
+        print(f"Model response: {response}")
+    except Exception as e:
+        print(f"Error checking model response: {e}")
+
+def check_gpt(title:str,summary:str, model_name="deepseek-v3-241226"):
     chat_completion = client.chat.completions.create(
     messages=[
         {
@@ -68,7 +96,8 @@ def check_gpt(title:str,summary:str):
             "content": f"Title: {title}\nAbstract: {summary}\n\nFrom the above information, answer whether this paper is aimed at imporoving Machine Learning systems in terms of improving system throughput or reducing latency; exclude those papers that aim at improving the precision or accuracy. You should only return yes or no! ",
         }
     ],
-    model="gpt-4o-mini-2024-07-18",
+    # model="gpt-4o-mini-2024-07-18",
+    model=model_name,
     max_tokens=100,
     )
     res=chat_completion.choices[0].message.content.lower()
@@ -80,7 +109,7 @@ def check_gpt(title:str,summary:str):
     
 import requests,re
 session = requests.Session()
-def pull_type(type_name:str):
+def pull_type(type_name:str, model_name="deepseek-v3-241226"):
     print(f"[DEBUG] Starting pull_type for {type_name}")
     local_db = sqlite3.connect(f"./content/{type_name[3:]}.db")
     cursor = local_db.cursor()
@@ -95,8 +124,8 @@ def pull_type(type_name:str):
         }
         
         response = session.get(
-            f"https://arxiv.org/list/{type_name}/recent",
-            # f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000",
+            # f"https://arxiv.org/list/{type_name}/recent",
+            f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000",
             headers=headers,
             verify=False,
             timeout=30
@@ -148,7 +177,7 @@ def pull_type(type_name:str):
                     
                 try:
                     print(f"[DEBUG] Checking with GPT: {result.title}")
-                    reject = check_gpt(result.title,result.summary)
+                    reject = check_gpt(result.title,result.summary, model_name)
                     print(f"[DEBUG] GPT decision for {result.entry_id}: {reject}")
                 except Exception as e:
                     print(f"[DEBUG] GPT check failed with error: {e}")
@@ -172,7 +201,7 @@ def pull_type(type_name:str):
     print(f"[DEBUG] pull_type complete. Found {len(res)} relevant papers")
     return res
 
-def rank_and_summarize_papers(papers):
+def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     if len(papers) == 0:
         return []
     
@@ -188,6 +217,7 @@ Format your response exactly like this:
 0|This paper is important because it introduces a novel approach to reduce inference latency.
 2|This work stands out for its scalable distributed training solution.
 5|Notable for its memory optimization technique that reduces GPU memory by 50%.
+请以自然流畅的中文，写出你的推荐理由。
 """
     
     chat_completion = client.chat.completions.create(
@@ -201,7 +231,8 @@ Format your response exactly like this:
                 "content": f"{prompt}\n\nPapers:\n" + "\n---\n".join(paper_summaries)
             }
         ],
-        model="gpt-4o-mini-2024-07-18",
+        # model="gpt-4o-mini-2024-07-18",
+        model=model_name,
         max_tokens=300,
     )
     
@@ -240,11 +271,14 @@ Format your response exactly like this:
         return papers  # Return original papers if ranking fails
 
 def arxiv_crawl():
+    model_name = "deepseek-v3-241226"
+    check_model_response(model_name)
+    
     print("[DEBUG] Starting arxiv_crawl()")
     papers = []
     for sub_type in config.ARXIV_LIST['types']:
         print(f"[DEBUG] Pulling papers for type: {sub_type}")
-        papers.extend(pull_type(sub_type))
+        papers.extend(pull_type(sub_type, model_name=model_name))
     print(f"[DEBUG] Total papers pulled: {len(papers)}")
     
     paper_map = {}
@@ -256,7 +290,7 @@ def arxiv_crawl():
     papers = list(paper_map.values())
     if len(papers) > 0:
         print("[DEBUG] Starting paper ranking and summarization")
-        top_papers = rank_and_summarize_papers(papers)
+        top_papers = rank_and_summarize_papers(papers, model_name=model_name)
         print(f"[DEBUG] Got {len(top_papers)} top papers with reasons")
         
         # Get remaining papers
