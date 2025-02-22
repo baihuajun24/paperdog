@@ -84,7 +84,7 @@ def check_model_response(model_name):
     except Exception as e:
         print(f"Error checking model response: {e}")
 
-def check_gpt(title:str,summary:str, model_name="deepseek-v3-241226"):
+def check_gpt(title:str,summary:str, comment:str, model_name="deepseek-v3-241226"):
     chat_completion = client.chat.completions.create(
     messages=[
         {
@@ -93,7 +93,7 @@ def check_gpt(title:str,summary:str, model_name="deepseek-v3-241226"):
         },
         {
             "role": "user",
-            "content": config.CLASSIFY_PROMPT.format(title=title, summary=summary)
+            "content": config.CLASSIFY_PROMPT.format(title=title, summary=summary, comment=comment)
         }
     ],
     # model="gpt-4o-mini-2024-07-18",
@@ -111,9 +111,9 @@ import requests,re
 session = requests.Session()
 def pull_type(type_name:str, model_name="deepseek-v3-241226"):
     print(f"[DEBUG] Starting pull_type for {type_name}")
-    local_db = sqlite3.connect(f"./content/{type_name[3:]}.db")
+    local_db = sqlite3.connect(f"./content/{type_name[3:]}_plus.db")
     cursor = local_db.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, reject BOOL DEFAULT 0, PRIMARY KEY (id))")
+    cursor.execute("CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, comment TEXT, reject BOOL DEFAULT 0, PRIMARY KEY (id))")
     local_db.commit()
     
     print(f"[DEBUG] Fetching arxiv listings for {type_name}")
@@ -165,8 +165,7 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
         paper = arxiv.Search(id_list=now_entries)
         try:
             for result in paper.results():
-                print(f"[DEBUG] Processing paper: {result.entry_id}")
-                
+                #  comment = result.comment
                 if("federated" in result.title.lower()):
                     print(f"[DEBUG] Skipping federated paper: {result.title}")
                     continue
@@ -177,7 +176,7 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
                     
                 try:
                     print(f"[DEBUG] Checking with GPT: {result.title}")
-                    reject = check_gpt(result.title,result.summary, model_name)
+                    reject = check_gpt(result.title,result.summary, result.comment, model_name)
                     print(f"[DEBUG] GPT decision for {result.entry_id}: {reject}")
                 except Exception as e:
                     print(f"[DEBUG] GPT check failed with error: {e}")
@@ -188,8 +187,11 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
                     res.append(result)
                     
                 print(f"[DEBUG] Inserting into DB: {result.entry_id}")
-                local_db.execute("INSERT OR IGNORE INTO arxiv VALUES (?,?,?,?)",
-                               (result.entry_id,result.title,result.summary,reject))
+                # Include the comment in the database insertion
+                local_db.execute("INSERT OR IGNORE INTO arxiv VALUES (?,?,?,?,?)",
+                                 (result.entry_id, result.title, result.summary, result.comment, reject))
+                # local_db.execute("INSERT OR IGNORE INTO arxiv VALUES (?,?,?,?)",
+                #                (result.entry_id,result.title,result.summary,reject))
                 local_db.commit()
                 
         except Exception as e:
@@ -208,7 +210,7 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     # Convert papers to a format suitable for GPT
     paper_summaries = []
     for idx, paper in enumerate(papers):
-        paper_summaries.append(f"Paper ID: {idx} Title: {paper.title}\nAbstract: {paper.summary}\nLink: {paper.entry_id}")
+        paper_summaries.append(f"Paper ID: {idx} Title: {paper.title}\nAbstract: {paper.summary}\nComment: {paper.comment}\nLink: {paper.entry_id}")
     
     chat_completion = client.chat.completions.create(
         messages=[
@@ -274,6 +276,7 @@ def arxiv_crawl():
         print(f"[DEBUG] Pulling papers for type: {sub_type}")
         papers.extend(pull_type(sub_type, model_name=model_name))
     print(f"[DEBUG] Total papers pulled: {len(papers)}")
+    print(f"[DEBUG] Check First paper: {papers[0]}")
     
     paper_map = {}
     for paper in papers:
