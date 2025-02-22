@@ -4,6 +4,10 @@ daily arxiv paper news feed by email
 - [x] Get a new OPENAI API
   - Got a deepseek-v3-241226 API key from ARK
 - [ ] Add author institutions as a list behind Authors List
+  - [ ] Got this type of info
+  [DEBUG] Available attributes: ['Author', 'Link', 'MissingFieldError', '__annotations__', '__class__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', '__weakref__', '_from_feed_entry', '_get_default_filename', '_get_pdf_url', '_raw', '_to_datetime', 'authors', 'categories', 'comment', 'doi', 'download_pdf', 'download_source', 'entry_id', 'get_short_id', 'journal_ref', 'links', 'pdf_url', 'primary_category', 'published', 'summary', 'title', 'updated']
+  - Use OpenAlex API to get author affiliations, store a local table for author info as well
+[DEBUG] Authors: [arxiv.Result.Author('Zixiang Cui'), arxiv.Result.Author('Xintong Ling'), arxiv.Result.Author('Xingyu Zhou'), arxiv.Result.Author('Jiaheng Wang'), arxiv.Result.Author('Zhi Ding'), arxiv.Result.Author('Xiqi Gao')]
 - [ ] Implement personalized paper recommendations:
   - [ ] Collect subscriber academic profiles (webpage/Google Scholar)
   - [ ] Generate custom prompts based on subscriber research interests
