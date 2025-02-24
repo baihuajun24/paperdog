@@ -20,5 +20,5 @@ daily arxiv paper news feed by email
 ## Update on 20250222
 - Adding crontab
 ```
-   30 10 * * * source /opt/anaconda3/bin/activate hw4 && /opt/anaconda3/envs/hw4/bin/python /Users/baihuajun/Documents/paperdog/crawler.py
+15 14 * * * cd /Users/baihuajun/Documents/paperdog && source /opt/anaconda3/bin/activate hw4 && /opt/anaconda3/envs/hw4/bin/python crawler.py >> log/$(date +\%Y-\%m-\%d).log 2>&1
 ```

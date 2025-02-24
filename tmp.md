@@ -1,3 +1,46 @@
+sudo plutil -lint /Library/LaunchDaemons/com.example.paperdog.plist
+sudo launchctl unload /Library/LaunchDaemons/com.example.paperdog.plist
+sudo launchctl load /Library/LaunchDaemons/com.example.paperdog.plist
+sudo launchctl list | grep com.example.paperdog
+
+# Auto-run
+# 创建 plist 文件
+sudo tee /Library/LaunchDaemons/com.example.wakeup.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.wakeup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/your/script.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>PathState</key>
+        <dict>
+            <key>/var/run/your_trigger</key>
+            <false/>
+        </dict>
+    </dict>
+</dict>
+</plist>
+EOF
+
+# 加载并启用
+sudo launchctl load /Library/LaunchDaemons/com.example.wakeup.plist
+
+
 # result entry
 [DEBUG] Check result fields: {'entry_id': 'http://arxiv.org/abs/2502.14691v1', 'updated': datetime.datetime(2025, 2, 20, 16, 18, 15, tzinfo=datetime.timezone.utc), 'published': datetime.datetime(2025, 2, 20, 16, 18, 15, tzinfo=datetime.timezone.utc), 'title': 'Parallelizing a modern GPU simulator', 'authors': [arxiv.Result.Author('Rodrigo Huerta'), arxiv.Result.Author('Antonio González')], 'summary': 'Simulators are a primary tool in computer architecture research but are\nextremely computationally intensive. Simulating modern architectures with\nincreased core counts and recent workloads can be challenging, even on modern\nhardware. This paper demonstrates that simulating some GPGPU workloads in a\nsingle-threaded state-of-the-art simulator such as Accel-sim can take more than\nfive days. In this paper we present a simple approach to parallelize this\nsimulator with minimal code changes by using OpenMP. Moreover, our\nparallelization technique is deterministic, so the simulator provides the same\nresults for single-threaded and multi-threaded simulations. Compared to\nprevious works, we achieve a higher speed-up, and, more importantly, the\nparallel simulation does not incur any inaccuracies. When we run the simulator\nwith 16 threads, we achieve an average speed-up of 5.8x and reach 14x in some\nworkloads. This allows researchers to simulate applications that take five days\nin less than 12 hours. By speeding up simulations, researchers can model larger\nsystems, simulate bigger workloads, add more detail to the model, increase the\nefficiency of the hardware platform where the simulator is run, and obtain\nresults sooner.', 'comment': None, 'journal_ref': 'CAMS 2024', 'doi': None, 'primary_category': 'cs.DC', 'categories': ['cs.DC', 'cs.AR', 'cs.PF'], 'links': [arxiv.Result.Link('http://arxiv.org/abs/2502.14691v1', title=None, rel='alternate', content_type=None), arxiv.Result.Link('http://arxiv.org/pdf/2502.14691v1', title='pdf', rel='related', content_type=None)], 'pdf_url': 'http://arxiv.org/pdf/2502.14691v1', '_raw': {'id': 'http://arxiv.org/abs/2502.14691v1', 'guidislink': True, 'link': 'http://arxiv.org/abs/2502.14691v1', 'updated': '2025-02-20T16:18:15Z', 'updated_parsed': time.struct_time(tm_year=2025, tm_mon=2, tm_mday=20, tm_hour=16, tm_min=18, tm_sec=15, tm_wday=3, tm_yday=51, tm_isdst=0), 'published': '2025-02-20T16:18:15Z', 'published_parsed': time.struct_time(tm_year=2025, tm_mon=2, tm_mday=20, tm_hour=16, tm_min=18, tm_sec=15, tm_wday=3, tm_yday=51, tm_isdst=0), 'title': 'Parallelizing a modern GPU simulator', 'title_detail': {'type': 'text/plain', 'language': None, 'base': '', 'value': 'Parallelizing a modern GPU simulator'}, 'summary': 'Simulators are a primary tool in computer architecture research but are\nextremely computationally intensive. Simulating modern architectures with\nincreased core counts and recent workloads can be challenging, even on modern\nhardware. This paper demonstrates that simulating some GPGPU workloads in a\nsingle-threaded state-of-the-art simulator such as Accel-sim can take more than\nfive days. In this paper we present a simple approach to parallelize this\nsimulator with minimal code changes by using OpenMP. Moreover, our\nparallelization technique is deterministic, so the simulator provides the same\nresults for single-threaded and multi-threaded simulations. Compared to\nprevious works, we achieve a higher speed-up, and, more importantly, the\nparallel simulation does not incur any inaccuracies. When we run the simulator\nwith 16 threads, we achieve an average speed-up of 5.8x and reach 14x in some\nworkloads. This allows researchers to simulate applications that take five days\nin less than 12 hours. By speeding up simulations, researchers can model larger\nsystems, simulate bigger workloads, add more detail to the model, increase the\nefficiency of the hardware platform where the simulator is run, and obtain\nresults sooner.', 'summary_detail': {'type': 'text/plain', 'language': None, 'base': '', 'value': 'Simulators are a primary tool in computer architecture research but are\nextremely computationally intensive. Simulating modern architectures with\nincreased core counts and recent workloads can be challenging, even on modern\nhardware. This paper demonstrates that simulating some GPGPU workloads in a\nsingle-threaded state-of-the-art simulator such as Accel-sim can take more than\nfive days. In this paper we present a simple approach to parallelize this\nsimulator with minimal code changes by using OpenMP. Moreover, our\nparallelization technique is deterministic, so the simulator provides the same\nresults for single-threaded and multi-threaded simulations. Compared to\nprevious works, we achieve a higher speed-up, and, more importantly, the\nparallel simulation does not incur any inaccuracies. When we run the simulator\nwith 16 threads, we achieve an average speed-up of 5.8x and reach 14x in some\nworkloads. This allows researchers to simulate applications that take five days\nin less than 12 hours. By speeding up simulations, researchers can model larger\nsystems, simulate bigger workloads, add more detail to the model, increase the\nefficiency of the hardware platform where the simulator is run, and obtain\nresults sooner.'}, 'authors': [{'name': 'Rodrigo Huerta'}, {'name': 'Antonio González'}], 'author_detail': {'name': 'Antonio González'}, 'author': 'Antonio González', 'arxiv_journal_ref': 'CAMS 2024', 'links': [{'href': 'http://arxiv.org/abs/2502.14691v1', 'rel': 'alternate', 'type': 'text/html'}, {'title': 'pdf', 'href': 'http://arxiv.org/pdf/2502.14691v1', 'rel': 'related', 'type': 'application/pdf'}], 'arxiv_primary_category': {'term': 'cs.DC', 'scheme': 'http://arxiv.org/schemas/atom'}, 'tags': [{'term': 'cs.DC', 'scheme': 'http://arxiv.org/schemas/atom', 'label': None}, {'term': 'cs.AR', 'scheme': 'http://arxiv.org/schemas/atom', 'label': None}, {'term': 'cs.PF', 'scheme': 'http://arxiv.org/schemas/atom', 'label': None}]}}
 

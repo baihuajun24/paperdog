@@ -170,9 +170,9 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
                     print(f"[DEBUG] Skipping federated paper: {result.title}")
                     continue
                     
-                # if local_db.execute("SELECT * FROM arxiv WHERE id=?",(result.entry_id,)).fetchone():
-                #     print(f"[DEBUG] Paper exists in DB: {result.title}:{result.entry_id}")
-                #     continue
+                if local_db.execute("SELECT * FROM arxiv WHERE id=?",(result.entry_id,)).fetchone():
+                    print(f"[DEBUG] Paper exists in DB: {result.title}:{result.entry_id}")
+                    continue
                     
                 try:
                     print(f"[DEBUG] Checking with GPT: {result.title}")
@@ -202,6 +202,32 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
             
     print(f"[DEBUG] pull_type complete. Found {len(res)} relevant papers")
     return res
+
+def parse_recommendations(response_lines):
+    top_indices = []
+    reasons = []
+    current_reason = []
+
+    for line in response_lines:
+        if '|' in line:
+            # If there's a current reason being built, save it
+            if current_reason:
+                reasons.append(' '.join(current_reason).strip())
+                current_reason = []
+
+            # Parse the index
+            idx, _ = line.split('|', 1)
+            idx = int(idx.strip())
+            top_indices.append(idx)
+        else:
+            # Collect reason lines
+            current_reason.append(line.strip())
+
+    # Append the last reason if it exists
+    if current_reason:
+        reasons.append(' '.join(current_reason).strip())
+
+    return top_indices, reasons
 
 def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     if len(papers) == 0:
@@ -236,19 +262,7 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
         # Create a list to store all papers
         all_papers = papers.copy()  # Keep a copy of all papers
 
-        # Track which papers are in top 3
-        top_indices = []
-        reasons = []
-
-        # Process top 3 selections
-        for i in range(0, len(response_lines), 3):
-            if '|' in response_lines[i]:
-                idx, _ = response_lines[i].split('|', 1)
-                idx = int(idx.strip())
-                if idx < len(papers):
-                    top_indices.append(idx)
-                    if i + 1 < len(response_lines):
-                        reasons.append(response_lines[i + 1].strip().replace('推荐理由：', ''))
+        top_indices, reasons = parse_recommendations(response_lines)
 
         # Add recommendation reasons to top papers
         for idx, reason in zip(top_indices, reasons):
