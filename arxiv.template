@@ -70,9 +70,9 @@
 <!-- Simple Statistics Section -->
 <div class="stats-section">
     <h2>Paper Statistics</h2>
-    <p><strong>Total papers retrieved from arXiv:</strong> {{ stats.total_retrieved }}</p>
-    <p><strong>Papers selected by initial filter:</strong> {{ stats.total_selected }}</p>
-    <p><strong>Categories:</strong> {{ stats.by_type.keys()|join(', ') }}</p>
+    <p><strong>Total papers published on arXiv recently:</strong> {{ stats.total_retrieved }}</p>
+    <p><strong>Papers relevant to mlsys:</strong> {{ stats.total_selected }}</p>
+    <p><strong>Categories covered:</strong> {{ stats.by_type.keys()|join(', ') }}</p>
 </div>
 
 <h2>Here are top {{ top_papers|length }} important papers from arxiv today:</h2>
@@ -83,7 +83,7 @@
     <div class="paper-authors">Authors: {{ paper.author_str }}</div>
     <div class="paper-abstract">Abstract: {{ paper.summary }}</div>
     <div class="paper-link">From: {{ paper.categories[0] }} <a href="http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}">http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}</a></div>
-    <div class="paper-importance">推荐理由: {{ paper.recommendation_reason }}</div>
+    <div class="paper-importance">{{ paper.recommendation_reason }}</div>
 </div>
 {% endfor %}
 

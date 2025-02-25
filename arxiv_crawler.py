@@ -314,27 +314,97 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
         print(f"[ERROR] Failed to rank papers: {e}")
         return papers  # Return original papers if ranking fails
 
-def init_db(type_name: str, db_path=None):
-    """Initialize database for a specific type"""
-    if db_path is None:
-        db_path = f"./content/{type_name[3:]}_plus.db"
+def init_master_db():
+    """Initialize the master database with all necessary tables"""
+    db_path = "./content/papers.db"
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
+    
+    # Create the main papers table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS arxiv (
-            id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS papers (
+            id TEXT,
             title TEXT,
             abstract TEXT,
             comment TEXT,
             authors TEXT,
             institutions TEXT,
             categories TEXT,
+            type_name TEXT,
+            published_date DATE,
+            date_added DATE,
             relevant BOOL DEFAULT 0,
-            date_added DATE
+            PRIMARY KEY (id, type_name)
         )
     """)
+    
+    # Create indexes for efficient querying
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_published_date ON papers(published_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_type_name ON papers(type_name)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_relevant ON papers(relevant)")
+    
     conn.commit()
     return conn, cursor
+
+def paper_exists(cursor, paper_id, type_name):
+    """Check if a paper already exists in the database"""
+    cursor.execute(
+        "SELECT COUNT(*) FROM papers WHERE id = ? AND type_name = ?", 
+        (paper_id, type_name)
+    )
+    return cursor.fetchone()[0] > 0
+
+def store_paper(cursor, paper, type_name, relevant):
+    """Store paper information in the master database"""
+    try:
+        # Extract authors
+        authors = [author.name for author in paper.authors]
+        authors_str = '|'.join(authors)
+        
+        # Extract institutions if available
+        institutions = []
+        if hasattr(paper, 'affiliations'):
+            institutions = paper.affiliations
+        elif hasattr(paper, 'authors') and hasattr(paper.authors[0], 'affiliation'):
+            institutions = [getattr(author, 'affiliation', '') for author in paper.authors]
+        institutions_str = '|'.join(institutions)
+        
+        # Extract categories
+        categories = paper.categories if hasattr(paper, 'categories') else []
+        categories_str = '|'.join(categories)
+        
+        # Get published date
+        published_date = None
+        if hasattr(paper, 'published'):
+            published_date = paper.published.strftime("%Y-%m-%d")
+        
+        # Current date for date_added
+        date_added = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+        # Insert paper into database
+        cursor.execute("""
+            INSERT OR REPLACE INTO papers 
+            (id, title, abstract, comment, authors, institutions, categories, 
+             type_name, published_date, date_added, relevant)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            paper.entry_id,
+            paper.title,
+            paper.summary,
+            getattr(paper, 'comment', ''),
+            authors_str,
+            institutions_str,
+            categories_str,
+            type_name,
+            published_date,
+            date_added,
+            1 if relevant else 0
+        ))
+        logger.debug(f"Stored paper in DB: {paper.title}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to store paper: {str(e)}")
+        return False
 
 def fetch_arxiv_entries(type_name):
     """Fetch recent entries from arxiv for a specific type"""
@@ -360,7 +430,7 @@ def fetch_arxiv_entries(type_name):
             
         r = response.content.decode('utf-8')
         entries = re.findall(r'/abs/(\d+\.\d+)" title="Abstract"', r)
-        print(f"[DEBUG] Found {len(entries)} papers in listing")
+        print(f"[DEBUG] Found {len(entries)} recent papers in {type_name} listing")
         
         # Get paper details using arxiv API
         if entries:
@@ -385,153 +455,52 @@ def process_paper(paper):
         print(f"[ERROR] Failed to process paper: {str(e)}")
         return None
 
-def store_paper(cursor, paper, relevant, date):
-    """Store paper information in the database"""
-    try:
-        # Extract authors and their institutions
-        authors = [author.name for author in paper.authors]
-        authors_str = '|'.join(authors)
-        
-        # Extract institutions if available
-        institutions = []
-        if hasattr(paper, 'affiliations'):
-            institutions = paper.affiliations
-        elif hasattr(paper, 'authors') and hasattr(paper.authors[0], 'affiliation'):
-            institutions = [getattr(author, 'affiliation', '') for author in paper.authors]
-        institutions_str = '|'.join(institutions)
-        
-        # Extract categories
-        categories = paper.categories if hasattr(paper, 'categories') else []
-        categories_str = '|'.join(categories)
-        
-        # Insert paper into database
-        cursor.execute("""
-            INSERT OR IGNORE INTO arxiv 
-            (id, title, abstract, comment, authors, institutions, categories, relevant, date_added)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            paper.entry_id,
-            paper.title,
-            paper.summary,
-            getattr(paper, 'comment', ''),
-            authors_str,
-            institutions_str,
-            categories_str,
-            1 if relevant else 0,
-            date
-        ))
-        print(f"[DEBUG] Stored paper in DB: {paper.title}, {relevant}")
-        return True
-    except Exception as e:
-        print(f"[ERROR] Failed to store paper: {str(e)}")
-        return False
-
-def check_existing_db(date):
-    """Check if database exists for the given date and print summary if it does"""
-    date_dir = f"./content/{date}"
-    if not (os.path.exists(date_dir) and os.path.isdir(date_dir)):
-        return False
-        
-    print(f"[INFO] Database directory for {date} already exists.")
-    
-    # Check for database files in the directory
-    db_files = [f for f in os.listdir(date_dir) if f.endswith('.db')]
-    if not db_files:
-        return False
-        
-    print(f"[INFO] Found {len(db_files)} database files for {date}:")
-    
-    total_entries = 0
-    total_selected = 0
-    
-    for db_file in db_files:
-        db_path = os.path.join(date_dir, db_file)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Get total count
-        cursor.execute("SELECT COUNT(*) FROM arxiv")
-        count = cursor.fetchone()[0]
-        total_entries += count
-        
-        # Check which column exists: 'reject' or 'relevant'
-        cursor.execute("PRAGMA table_info(arxiv)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'relevant' in columns:
-            # New column name
-            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE relevant = 1")
-        else:
-            # Old column name
-            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE reject = 1")
-            
-        selected = cursor.fetchone()[0]
-        total_selected += selected
-        
-        print(f"[INFO] {db_file}: {count} entries, {selected} selected papers")
-        
-        # Get first 3 entries sorted by title - handle both column names
-        if 'relevant' in columns:
-            cursor.execute("SELECT id, title FROM arxiv WHERE relevant = 1 ORDER BY title LIMIT 3")
-        else:
-            cursor.execute("SELECT id, title FROM arxiv WHERE reject = 1 ORDER BY title LIMIT 3")
-            
-        samples = cursor.fetchall()
-        
-        if samples:
-            print(f"[INFO] Sample papers from {db_file}:")
-            for paper_id, title in samples:
-                print(f"[INFO] - {title[:80]}... (ID: {paper_id})")
-        
-        conn.close()
-    
-    print(f"[INFO] Summary for {date}: {total_entries} total entries, {total_selected} selected papers")
-    return True
-
 def pull_papers(date=None):
-    """Pull papers from arxiv and store in DB"""
+    """Pull papers from arxiv and store in master DB"""
     if date is None:
         date = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    # Check if database already exists for this date
-    if check_existing_db(date):
-        return
+    # Initialize master database
+    conn, cursor = init_master_db()
     
-    # If no directory or database exists for this date, proceed with pulling papers
-    print(f"[INFO] Pulling papers for date: {date}")
-    
-    # Create date directory if it doesn't exist
-    date_dir = f"./content/{date}"
-    if not os.path.exists(date_dir):
-        os.makedirs(date_dir)
-    
-    for sub_type in config.ARXIV_LIST['types']:
-        db_path = os.path.join(date_dir, f"{sub_type[3:]}.db")
-        conn, cursor = init_db(sub_type, db_path)
-        try:
+    try:
+        logger.info(f"Pulling papers for date: {date}")
+        
+        for sub_type in config.ARXIV_LIST['types']:
+            logger.info(f"Processing {sub_type}")
             entries = fetch_arxiv_entries(sub_type)
+            
             for entry in entries:
+                # Check if paper exists in database
+                if paper_exists(cursor, entry.entry_id, sub_type):
+                    logger.info(f"Paper already exists: {entry.title}")
+                    continue
+                
+                # Process paper
                 paper = process_paper(entry)
                 if paper:
-                    # Store all papers, with relevant flag from check_gpt
+                    # Check if paper is relevant
                     relevant = check_gpt(paper.title, paper.summary, paper.comment)
-                    store_paper(cursor, paper, relevant, date)
+                    # Store paper
+                    store_paper(cursor, paper, sub_type, relevant)
+            
             conn.commit()
-        finally:
-            conn.close()
+    finally:
+        conn.close()
 
 def send_daily_email(date=None):
-    """Send email based on DB contents"""
+    """Send email based on papers from a specific date"""
     if date is None:
         date = datetime.datetime.now().strftime("%Y-%m-%d")
-        
-    date_dir = f"./content/{date}"
-    if not os.path.exists(date_dir):
-        print(f"[ERROR] No database directory found for date: {date}")
+    
+    # Connect to master database
+    db_path = "./content/papers.db"
+    if not os.path.exists(db_path):
+        logger.error(f"Master database not found at {db_path}")
         return
-        
-    all_papers = []
-    db_files = [f for f in os.listdir(date_dir) if f.endswith('.db')]
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
     
     # Initialize statistics dictionary
     stats = {
@@ -540,60 +509,47 @@ def send_daily_email(date=None):
         'by_type': {}
     }
     
-    for db_file in db_files:
-        db_path = os.path.join(date_dir, db_file)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Get the type name from the db file name
-        type_name = "cs." + db_file.replace('.db', '')
-        
-        # Check which column exists: 'reject' or 'relevant'
-        cursor.execute("PRAGMA table_info(arxiv)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        # Get total count
-        cursor.execute("SELECT COUNT(*) FROM arxiv")
-        total_count = cursor.fetchone()[0]
-        stats['total_retrieved'] += total_count
-        
-        # Get selected papers count
-        if 'relevant' in columns:
-            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE relevant = 1")
-        else:
-            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE reject = 1")
-        selected_count = cursor.fetchone()[0]
-        stats['total_selected'] += selected_count
-        
-        # Add type statistics
-        stats['by_type'][type_name] = {
-            'retrieved': total_count,
-            'selected': selected_count
-        }
-        
-        # Get papers where relevant=1 (or reject=1 for older DBs)
-        if 'relevant' in columns:
-            cursor.execute("SELECT * FROM arxiv WHERE relevant = 1")
-        else:
-            cursor.execute("SELECT * FROM arxiv WHERE reject = 1")
-            
-        papers = cursor.fetchall()
-
-
-        
-        for paper_data in papers:
-            paper = create_paper_object(paper_data)
-            all_papers.append(paper)
-            
-        conn.close()
+    # Get statistics by type
+    cursor.execute("""
+        SELECT type_name, COUNT(*), SUM(CASE WHEN relevant = 1 THEN 1 ELSE 0 END)
+        FROM papers 
+        WHERE date_added = ?
+        GROUP BY type_name
+    """, (date,))
     
-    if all_papers:
-        print(f"[INFO] Found {len(all_papers)} papers to include in email")
-        ranked_papers = rank_and_summarize_papers(all_papers)
-        # Pass the stats parameter to send_email
-        send_email(ranked_papers, stats=stats)
-    else:
-        print(f"[INFO] No papers found for date: {date}")
+    type_stats = cursor.fetchall()
+    for type_name, total, selected in type_stats:
+        stats['total_retrieved'] += total
+        stats['total_selected'] += selected
+        stats['by_type'][type_name] = {
+            'retrieved': total,
+            'selected': selected
+        }
+    
+    # Get all relevant papers for the date
+    cursor.execute("""
+        SELECT * FROM papers 
+        WHERE date_added = ? AND relevant = 1
+    """, (date,))
+    
+    papers_data = cursor.fetchall()
+    conn.close()
+    
+    if not papers_data:
+        logger.info(f"No relevant papers found for date: {date}")
+        return
+    
+    # Create paper objects
+    all_papers = []
+    for paper_data in papers_data:
+        paper = create_paper_object(paper_data)
+        all_papers.append(paper)
+    
+    logger.info(f"Found {len(all_papers)} relevant papers for {date}")
+    
+    # Rank and send papers
+    ranked_papers = rank_and_summarize_papers(all_papers)
+    send_email(ranked_papers, stats=stats)
 
 def create_paper_object(db_row):
     """Create a paper object from DB row"""
@@ -603,27 +559,16 @@ def create_paper_object(db_row):
     
     paper = Paper()
     
-    # Debug what fields are available in the paper_data
-    print(f"[DEBUG] Fields in paper_data: {db_row}")
+    # The expected schema for the papers table
+    expected_fields = [
+        'id', 'title', 'abstract', 'comment', 'authors', 'institutions', 
+        'categories', 'type_name', 'published_date', 'date_added', 'relevant'
+    ]
     
-    # Handle different database schemas based on the number of columns
-    if len(db_row) >= 9:  # New schema with 9 columns (including institutions)
-        (paper.entry_id, paper.title, paper.summary, paper.comment, 
-         authors_str, institutions_str, categories_str, _, _) = db_row
-        
-        # Create author objects similar to arxiv API
-        class Author:
-            def __init__(self, name):
-                self.name = name
-                
-        paper.authors = [Author(name) for name in authors_str.split('|') if name] if authors_str else []
-        paper.institutions = institutions_str.split('|') if institutions_str else []
-        paper.categories = categories_str.split('|') if categories_str else []
-    else:
-        # Instead of trying to handle unknown schemas, provide a clear error message
-        print(f"[ERROR] Database row has unexpected number of fields: {len(db_row)}")
-        print(f"[ERROR] Expected 9 fields but got: {db_row}")
-        print(f"[ERROR] Using minimal fallback to prevent crash")
+    if len(db_row) != len(expected_fields):
+        logger.error(f"Database row has unexpected number of fields: {len(db_row)}")
+        logger.error(f"Expected {len(expected_fields)} fields but got: {db_row}")
+        logger.error("Using minimal fallback to prevent crash")
         
         # Set minimal required fields to prevent crashes
         paper.entry_id = db_row[0] if len(db_row) > 0 else "unknown_id"
@@ -633,58 +578,96 @@ def create_paper_object(db_row):
         paper.authors = []
         paper.institutions = []
         paper.categories = []
+        paper.type_name = db_row[7] if len(db_row) > 7 else "unknown"
+        paper.published_date = None
+    else:
+        # Unpack all fields
+        (paper.entry_id, paper.title, paper.summary, paper.comment,
+         authors_str, institutions_str, categories_str, paper.type_name,
+         paper.published_date, paper.date_added, _) = db_row
+        
+        # Create author objects
+        class Author:
+            def __init__(self, name):
+                self.name = name
+        
+        paper.authors = [Author(name) for name in authors_str.split('|') if name] if authors_str else []
+        paper.institutions = institutions_str.split('|') if institutions_str else []
+        paper.categories = categories_str.split('|') if categories_str else []
     
     # Create author string for display
-    paper.author_str = ', '.join([author.name for author in paper.authors]) if hasattr(paper, 'authors') and paper.authors else "Unknown"
+    paper.author_str = ', '.join([author.name for author in paper.authors]) if paper.authors else "Unknown"
     
     return paper
 
-def arxiv_crawl():
-    model_name = "deepseek-v3-241226"
-    check_model_response(model_name)
-
-    # Initialize statistics dictionary
-    stats = {
-        'total_retrieved': 0,  # Total papers found on arxiv
-        'total_selected': 0,   # Total papers selected by check_gpt()
-        'by_type': {}
-    }
+def migrate_old_databases():
+    """Migrate data from old database structure to new master database"""
+    # Initialize master database
+    conn, cursor = init_master_db()
     
-    
-    print("[DEBUG] Starting arxiv_crawl()")
-    papers = []
-    for sub_type in config.ARXIV_LIST['types']:
-        print(f"[DEBUG] Pulling papers for type: {sub_type}")
-        papers.extend(pull_type(sub_type, model_name=model_name, stats=stats))
-        stats['total_selected'] += len(papers)
-        stats['by_type'][sub_type] = len(papers)
-
-    print(f"[DEBUG] Total papers pulled: {stats['total_retrieved']}")
-    
-    paper_map = {}
-    for paper in papers:
-        paper.author_str = ", ".join([author.name for author in paper.authors])
-        paper_map[paper.entry_id] = paper
-    print(f"[DEBUG] Unique papers after deduplication: {len(paper_map)}")
-    
-    papers = list(paper_map.values())
-    if len(papers) > 0:
-        print("[DEBUG] Starting paper ranking and summarization")
-        ranked_papers = rank_and_summarize_papers(papers, model_name=model_name)
+    try:
+        # Find all date directories
+        content_dir = "./content"
+        date_dirs = [d for d in os.listdir(content_dir) 
+                    if os.path.isdir(os.path.join(content_dir, d)) 
+                    and re.match(r'\d{4}-\d{2}-\d{2}', d)]
         
-        # Split papers into those with recommendations and those without
-        top_papers = [p for p in ranked_papers if hasattr(p, 'recommendation_reason')]
-        other_papers = [p for p in ranked_papers if not hasattr(p, 'recommendation_reason')]
-        
-        print(f"[DEBUG] Got {len(top_papers)} top papers with reasons")
-        print(f"[DEBUG] Other papers count: {len(other_papers)}")
-        
-        # Combine top papers and other papers (top papers first)
-        papers_to_send = top_papers + other_papers
-        print(f"[DEBUG] Sending email with total {len(papers_to_send)} papers")
-        
-        # Pass both the combined list and the separated lists to send_email
-        send_email(papers_to_send, stats=stats)
-    else:
-        print("[DEBUG] No papers found to process")
+        for date_dir in date_dirs:
+            date = date_dir
+            dir_path = os.path.join(content_dir, date_dir)
+            
+            # Find all database files in the directory
+            db_files = [f for f in os.listdir(dir_path) if f.endswith('.db')]
+            
+            for db_file in db_files:
+                # Determine type_name from filename
+                type_name = "cs." + db_file.replace('.db', '')
+                
+                # Connect to old database
+                old_db_path = os.path.join(dir_path, db_file)
+                old_conn = sqlite3.connect(old_db_path)
+                old_cursor = old_conn.cursor()
+                
+                # Check schema to determine column names
+                old_cursor.execute("PRAGMA table_info(arxiv)")
+                columns = [col[1] for col in old_cursor.fetchall()]
+                
+                # Determine relevant column name
+                relevant_col = 'relevant' if 'relevant' in columns else 'reject'
+                
+                # Get all papers from old database
+                old_cursor.execute(f"SELECT * FROM arxiv WHERE {relevant_col} = 1")
+                old_papers = old_cursor.fetchall()
+                
+                # Insert papers into master database
+                for old_paper in old_papers:
+                    # Map old schema to new schema
+                    # This will need to be adjusted based on your actual old schema
+                    paper_id = old_paper[0]
+                    title = old_paper[1]
+                    abstract = old_paper[2]
+                    comment = old_paper[3] if len(old_paper) > 3 else ""
+                    authors = old_paper[4] if len(old_paper) > 4 else ""
+                    institutions = old_paper[5] if len(old_paper) > 5 else ""
+                    categories = old_paper[6] if len(old_paper) > 6 else ""
+                    
+                    # Insert into master database
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO papers 
+                        (id, title, abstract, comment, authors, institutions, categories, 
+                         type_name, published_date, date_added, relevant)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    """, (
+                        paper_id, title, abstract, comment, authors, institutions, categories,
+                        type_name, None, date
+                    ))
+                
+                old_conn.close()
+            
+        conn.commit()
+        logger.info("Migration of old databases completed successfully")
+    except Exception as e:
+        logger.error(f"Error during migration: {str(e)}")
+    finally:
+        conn.close()
     
