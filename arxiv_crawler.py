@@ -406,40 +406,65 @@ def store_paper(cursor, paper, type_name, relevant):
         logger.error(f"Failed to store paper: {str(e)}")
         return False
 
-def fetch_arxiv_entries(type_name):
-    """Fetch recent entries from arxiv for a specific type"""
-    print(f"[DEBUG] Fetching arxiv listings for {type_name}")
+def fetch_arxiv_entries(sub_type):
+    """Fetch entries from arxiv API"""
     try:
-        # Add headers to mimic a browser request
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # Get recent papers from the last few days
+        # The issue is here - config.ARXIV_LIST['types'] is a list, not a dictionary
+        # We need to construct the query differently
         
-        response = session.get(
-            f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000",
-            headers=headers,
-            verify=False,
-            timeout=30
+        # Construct the query based on the sub_type
+        query = f"cat:{sub_type}"
+        
+        search = arxiv.Search(
+            query=query,
+            max_results=config.ARXIV_LIST.get('max_results', 100),
+            sort_by=arxiv.SortCriterion.SubmittedDate
         )
         
-        print(f"[DEBUG] Response status code: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"[ERROR] Failed to fetch arxiv listings. Status code: {response.status_code}")
-            return []
+        # Collect all entries
+        entries = []
+        for result in search.results():
+            entries.append(result)
             
-        r = response.content.decode('utf-8')
-        entries = re.findall(r'/abs/(\d+\.\d+)" title="Abstract"', r)
-        print(f"[DEBUG] Found {len(entries)} recent papers in {type_name} listing")
-        
-        # Get paper details using arxiv API
-        if entries:
-            paper_search = arxiv.Search(id_list=entries)
-            return list(paper_search.results())
-        return []
+        logger.info(f"Retrieved {len(entries)} papers for {sub_type}")
+        return entries
         
     except Exception as e:
-        print(f"[ERROR] Failed to fetch arxiv listings: {str(e)}")
+        logger.error(f"Failed to fetch arxiv listings: {str(e)}")
+        
+        # If we have a list of paper IDs to fetch, split them into smaller batches
+        if 'id_list' in str(e) and '414' in str(e):
+            logger.warning("Request URI too long. Splitting into smaller batches.")
+            
+            # Extract paper IDs from the error message
+            error_msg = str(e)
+            start_idx = error_msg.find('id_list=') + 8
+            end_idx = error_msg.find('&sortBy')
+            if start_idx > 8 and end_idx > start_idx:
+                id_list_str = error_msg[start_idx:end_idx]
+                paper_ids = id_list_str.split('%2C')
+                
+                # Process in batches of 50
+                batch_size = 50
+                entries = []
+                
+                for i in range(0, len(paper_ids), batch_size):
+                    batch_ids = paper_ids[i:i+batch_size]
+                    try:
+                        logger.info(f"Fetching batch {i//batch_size + 1}/{(len(paper_ids) + batch_size - 1)//batch_size}")
+                        batch_search = arxiv.Search(
+                            id_list=batch_ids,
+                            max_results=batch_size
+                        )
+                        for result in batch_search.results():
+                            entries.append(result)
+                    except Exception as batch_error:
+                        logger.error(f"Failed to fetch batch {i//batch_size + 1}: {str(batch_error)}")
+                
+                logger.info(f"Retrieved {len(entries)} papers for {sub_type} after batching")
+                return entries
+        
         return []
 
 def process_paper(paper):
