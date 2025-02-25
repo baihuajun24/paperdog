@@ -42,6 +42,12 @@
         padding-top: 20px;
         border-top: 2px solid #eee;
     }
+    .stats-section {
+        margin: 20px 0;
+        padding: 15px;
+        background-color: #f0f8ff;
+        border-left: 4px solid #4682b4;
+    }
 </style>
 <script type="text/javascript" async
   src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML">
@@ -60,10 +66,16 @@
 <p>Hi,</p>
 
 {% if papers %}
-{% set top_papers = papers[:3] %}
-{% set other_papers = papers[3:] %}
 
-<h2>Here are top 3 important papers from arxiv today:</h2>
+<!-- Simple Statistics Section -->
+<div class="stats-section">
+    <h2>Paper Statistics</h2>
+    <p><strong>Total papers retrieved from arXiv:</strong> {{ stats.total_retrieved }}</p>
+    <p><strong>Papers selected by initial filter:</strong> {{ stats.total_selected }}</p>
+    <p><strong>Categories:</strong> {{ stats.by_type.keys()|join(', ') }}</p>
+</div>
+
+<h2>Here are top {{ top_papers|length }} important papers from arxiv today:</h2>
 
 {% for paper in top_papers %}
 <div class="paper-section">
@@ -81,7 +93,7 @@
     <div class="paper-section">
         <div class="paper-title">{{ paper.title }}</div>
         <div class="paper-authors">Authors: {{ paper.author_str }}</div>
-        <div class="paper-abstract">Abstract: {{ paper.summary }}</div>
+        <!-- Abstract removed for less important papers -->
         <div class="paper-link">From: {{ paper.categories[0] }} <a href="http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}">http://arxiv.org/abs/{{ paper.entry_id.replace('http://arxiv.org/abs/', '') }}</a></div>
     </div>
     {% endfor %}

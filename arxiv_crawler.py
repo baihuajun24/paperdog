@@ -10,12 +10,28 @@ import os
 import smtplib
 from volcenginesdkarkruntime import Ark
 #CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, PRIMARY KEY (id),UNIQUE (ID))
-def send_email(papers):
+def send_email(papers, stats=None):
     environment = Environment(loader=FileSystemLoader("./"))
     template = environment.get_template("arxiv.template")
     
+    # Split papers into top papers and others
+    top_papers = [p for p in papers if hasattr(p, 'recommendation_reason')]
+    other_papers = [p for p in papers if not hasattr(p, 'recommendation_reason')]
+    
+    print(f"[DEBUG] Email will contain {len(top_papers)} top papers and {len(other_papers)} other papers")
+    
+    # Debug the first top paper if available
+    if top_papers:
+        print(f"[DEBUG] First top paper: {top_papers[0].title}")
+        print(f"[DEBUG] First top paper reason: {getattr(top_papers[0], 'recommendation_reason', 'No reason')}")
+    
     # Generate email content
-    email_html = template.render(papers=papers)
+    email_html = template.render(
+        papers=papers,
+        top_papers=top_papers,
+        other_papers=other_papers,
+        stats=stats
+    )
     
     # Debug print the content
     print("=== Email Content Preview ===")
@@ -109,7 +125,7 @@ def check_gpt(title:str,summary:str, comment:str, model_name="deepseek-v3-241226
     
 import requests,re
 session = requests.Session()
-def pull_type(type_name:str, model_name="deepseek-v3-241226"):
+def pull_type(type_name:str, model_name="deepseek-v3-241226", stats=None):
     print(f"[DEBUG] Starting pull_type for {type_name}")
     local_db = sqlite3.connect(f"./content/{type_name[3:]}_plus.db")
     cursor = local_db.cursor()
@@ -140,7 +156,16 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
             
         r = response.content.decode('utf-8')
         entries = re.findall(r'/abs/(\d+\.\d+)" title="Abstract"',r)
-        print(f"[DEBUG] Found {len(entries)} papers in listing")
+        total_retrieved = len(entries)  # This is the total count of papers retrieved
+        print(f"[DEBUG] Found {total_retrieved} papers in listing")
+        
+        # Update stats if provided
+        if stats is not None:
+            stats['total_retrieved'] += total_retrieved
+            if type_name not in stats['by_type']:
+                stats['by_type'][type_name] = {'retrieved': total_retrieved, 'selected': 0}
+            else:
+                stats['by_type'][type_name]['retrieved'] = total_retrieved
         
         # Print first few entries for debugging
         if entries:
@@ -164,19 +189,21 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
         
         paper = arxiv.Search(id_list=now_entries)
         try:
-            for result in paper.results():
-                #  comment = result.comment
+            # Convert the iterator to a list to process it
+            paper_results = list(paper.results())
+            
+            for result in paper_results:
                 if("federated" in result.title.lower()):
                     print(f"[DEBUG] Skipping federated paper: {result.title}")
                     continue
                     
-                if local_db.execute("SELECT * FROM arxiv WHERE id=?",(result.entry_id,)).fetchone():
-                    print(f"[DEBUG] Paper exists in DB: {result.title}:{result.entry_id}")
-                    continue
+                # if local_db.execute("SELECT * FROM arxiv WHERE id=?",(result.entry_id,)).fetchone():
+                #     print(f"[DEBUG] Paper exists in DB: {result.title}:{result.entry_id}")
+                #     continue
                     
                 try:
                     print(f"[DEBUG] Checking with GPT: {result.title}")
-                    reject = check_gpt(result.title,result.summary, result.comment, model_name)
+                    reject = check_gpt(result.title, result.summary, result.comment, model_name)
                     print(f"[DEBUG] GPT decision for {result.entry_id}: {reject}")
                 except Exception as e:
                     print(f"[DEBUG] GPT check failed with error: {e}")
@@ -185,6 +212,10 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
                 if(reject):
                     print(f"[DEBUG] Adding paper to results: {result.entry_id}")
                     res.append(result)
+                    # Update selected count in stats
+                    if stats is not None:
+                        stats['total_selected'] += 1
+                        stats['by_type'][type_name]['selected'] += 1
                     
                 print(f"[DEBUG] Inserting into DB: {result.entry_id}")
                 # Include the comment in the database insertion
@@ -199,6 +230,9 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226"):
             local_db.commit()
         finally:
             local_db.commit()
+            
+    print(f"[DEBUG] pull_type complete. Found {len(res)} relevant papers out of {total_retrieved} total")
+    return res
             
     print(f"[DEBUG] pull_type complete. Found {len(res)} relevant papers")
     return res
@@ -266,15 +300,12 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
 
         # Add recommendation reasons to top papers
         for idx, reason in zip(top_indices, reasons):
-            all_papers[idx].recommendation_reason = reason
+            if idx < len(all_papers):
+                all_papers[idx].recommendation_reason = reason
+                print(f"[DEBUG] Added reason to paper {idx}: {reason[:30]}...")
 
-        # Reorder papers to put top 3 first
-        top_papers = [all_papers[i] for i in top_indices]
-        other_papers = [p for i, p in enumerate(all_papers) if i not in top_indices]
-
-        # Return reordered list with top papers first, followed by others
-        return top_papers + other_papers
-
+        # Return all papers (some will have recommendation_reason attribute)
+        return all_papers
 
     except Exception as e:
         print(f"[ERROR] Failed to rank papers: {e}")
@@ -283,14 +314,24 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
 def arxiv_crawl():
     model_name = "deepseek-v3-241226"
     check_model_response(model_name)
+
+    # Initialize statistics dictionary
+    stats = {
+        'total_retrieved': 0,  # Total papers found on arxiv
+        'total_selected': 0,   # Total papers selected by check_gpt()
+        'by_type': {}
+    }
+    
     
     print("[DEBUG] Starting arxiv_crawl()")
     papers = []
     for sub_type in config.ARXIV_LIST['types']:
         print(f"[DEBUG] Pulling papers for type: {sub_type}")
-        papers.extend(pull_type(sub_type, model_name=model_name))
-    print(f"[DEBUG] Total papers pulled: {len(papers)}")
-    print(f"[DEBUG] Check First paper: {papers[0]}")
+        papers.extend(pull_type(sub_type, model_name=model_name, stats=stats))
+        stats['total_selected'] += len(papers)
+        stats['by_type'][sub_type] = len(papers)
+
+    print(f"[DEBUG] Total papers pulled: {stats['total_retrieved']}")
     
     paper_map = {}
     for paper in papers:
@@ -301,18 +342,21 @@ def arxiv_crawl():
     papers = list(paper_map.values())
     if len(papers) > 0:
         print("[DEBUG] Starting paper ranking and summarization")
-        top_papers = rank_and_summarize_papers(papers, model_name=model_name)
-        print(f"[DEBUG] Got {len(top_papers)} top papers with reasons")
+        ranked_papers = rank_and_summarize_papers(papers, model_name=model_name)
         
-        # Get remaining papers
-        top_paper_ids = {p.entry_id for p in top_papers}
-        other_papers = [p for p in papers if p.entry_id not in top_paper_ids]
+        # Split papers into those with recommendations and those without
+        top_papers = [p for p in ranked_papers if hasattr(p, 'recommendation_reason')]
+        other_papers = [p for p in ranked_papers if not hasattr(p, 'recommendation_reason')]
+        
+        print(f"[DEBUG] Got {len(top_papers)} top papers with reasons")
         print(f"[DEBUG] Other papers count: {len(other_papers)}")
         
-        # Combine top papers and other papers
-        papers = top_papers + other_papers
-        print(f"[DEBUG] Sending email with total {len(papers)} papers")
-        send_email(papers)
+        # Combine top papers and other papers (top papers first)
+        papers_to_send = top_papers + other_papers
+        print(f"[DEBUG] Sending email with total {len(papers_to_send)} papers")
+        
+        # Pass both the combined list and the separated lists to send_email
+        send_email(papers_to_send, stats=stats)
     else:
         print("[DEBUG] No papers found to process")
     
