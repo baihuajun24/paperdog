@@ -9,6 +9,10 @@ import datetime
 import os
 import smtplib
 from volcenginesdkarkruntime import Ark
+import requests
+from loguru import logger
+import re
+
 #CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, PRIMARY KEY (id),UNIQUE (ID))
 def send_email(papers, stats=None):
     environment = Environment(loader=FileSystemLoader("./"))
@@ -123,13 +127,12 @@ def check_gpt(title:str,summary:str, comment:str, model_name="deepseek-v3-241226
     else:
         return False
     
-import requests,re
 session = requests.Session()
 def pull_type(type_name:str, model_name="deepseek-v3-241226", stats=None):
     print(f"[DEBUG] Starting pull_type for {type_name}")
     local_db = sqlite3.connect(f"./content/{type_name[3:]}_plus.db")
     cursor = local_db.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, comment TEXT, reject BOOL DEFAULT 0, PRIMARY KEY (id))")
+    cursor.execute("CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, comment TEXT, relevant BOOL DEFAULT 0, PRIMARY KEY (id))")
     local_db.commit()
     
     print(f"[DEBUG] Fetching arxiv listings for {type_name}")
@@ -203,13 +206,13 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226", stats=None):
                     
                 try:
                     print(f"[DEBUG] Checking with GPT: {result.title}")
-                    reject = check_gpt(result.title, result.summary, result.comment, model_name)
-                    print(f"[DEBUG] GPT decision for {result.entry_id}: {reject}")
+                    relevant = check_gpt(result.title, result.summary, result.comment, model_name)
+                    print(f"[DEBUG] GPT decision for {result.entry_id}: {relevant}")
                 except Exception as e:
                     print(f"[DEBUG] GPT check failed with error: {e}")
                     exit(0)
                     
-                if(reject):
+                if(relevant):
                     print(f"[DEBUG] Adding paper to results: {result.entry_id}")
                     res.append(result)
                     # Update selected count in stats
@@ -220,9 +223,9 @@ def pull_type(type_name:str, model_name="deepseek-v3-241226", stats=None):
                 print(f"[DEBUG] Inserting into DB: {result.entry_id}")
                 # Include the comment in the database insertion
                 local_db.execute("INSERT OR IGNORE INTO arxiv VALUES (?,?,?,?,?)",
-                                 (result.entry_id, result.title, result.summary, result.comment, reject))
+                                 (result.entry_id, result.title, result.summary, result.comment, relevant))
                 # local_db.execute("INSERT OR IGNORE INTO arxiv VALUES (?,?,?,?)",
-                #                (result.entry_id,result.title,result.summary,reject))
+                #                (result.entry_id,result.title,result.summary,relevant))
                 local_db.commit()
                 
         except Exception as e:
@@ -310,6 +313,331 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     except Exception as e:
         print(f"[ERROR] Failed to rank papers: {e}")
         return papers  # Return original papers if ranking fails
+
+def init_db(type_name: str, db_path=None):
+    """Initialize database for a specific type"""
+    if db_path is None:
+        db_path = f"./content/{type_name[3:]}_plus.db"
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS arxiv (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            abstract TEXT,
+            comment TEXT,
+            authors TEXT,
+            institutions TEXT,
+            categories TEXT,
+            relevant BOOL DEFAULT 0,
+            date_added DATE
+        )
+    """)
+    conn.commit()
+    return conn, cursor
+
+def fetch_arxiv_entries(type_name):
+    """Fetch recent entries from arxiv for a specific type"""
+    print(f"[DEBUG] Fetching arxiv listings for {type_name}")
+    try:
+        # Add headers to mimic a browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = session.get(
+            f"https://arxiv.org/list/{type_name}/recent?skip=0&show=2000",
+            headers=headers,
+            verify=False,
+            timeout=30
+        )
+        
+        print(f"[DEBUG] Response status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[ERROR] Failed to fetch arxiv listings. Status code: {response.status_code}")
+            return []
+            
+        r = response.content.decode('utf-8')
+        entries = re.findall(r'/abs/(\d+\.\d+)" title="Abstract"', r)
+        print(f"[DEBUG] Found {len(entries)} papers in listing")
+        
+        # Get paper details using arxiv API
+        if entries:
+            paper_search = arxiv.Search(id_list=entries)
+            return list(paper_search.results())
+        return []
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch arxiv listings: {str(e)}")
+        return []
+
+def process_paper(paper):
+    """Process a paper from arxiv API to extract relevant information"""
+    try:
+        # Skip papers with "federated" in the title
+        if "federated" in paper.title.lower():
+            print(f"[DEBUG] Skipping federated paper: {paper.title}")
+            return None
+            
+        return paper
+    except Exception as e:
+        print(f"[ERROR] Failed to process paper: {str(e)}")
+        return None
+
+def store_paper(cursor, paper, relevant, date):
+    """Store paper information in the database"""
+    try:
+        # Extract authors and their institutions
+        authors = [author.name for author in paper.authors]
+        authors_str = '|'.join(authors)
+        
+        # Extract institutions if available
+        institutions = []
+        if hasattr(paper, 'affiliations'):
+            institutions = paper.affiliations
+        elif hasattr(paper, 'authors') and hasattr(paper.authors[0], 'affiliation'):
+            institutions = [getattr(author, 'affiliation', '') for author in paper.authors]
+        institutions_str = '|'.join(institutions)
+        
+        # Extract categories
+        categories = paper.categories if hasattr(paper, 'categories') else []
+        categories_str = '|'.join(categories)
+        
+        # Insert paper into database
+        cursor.execute("""
+            INSERT OR IGNORE INTO arxiv 
+            (id, title, abstract, comment, authors, institutions, categories, relevant, date_added)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            paper.entry_id,
+            paper.title,
+            paper.summary,
+            getattr(paper, 'comment', ''),
+            authors_str,
+            institutions_str,
+            categories_str,
+            1 if relevant else 0,
+            date
+        ))
+        print(f"[DEBUG] Stored paper in DB: {paper.title}, {relevant}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to store paper: {str(e)}")
+        return False
+
+def check_existing_db(date):
+    """Check if database exists for the given date and print summary if it does"""
+    date_dir = f"./content/{date}"
+    if not (os.path.exists(date_dir) and os.path.isdir(date_dir)):
+        return False
+        
+    print(f"[INFO] Database directory for {date} already exists.")
+    
+    # Check for database files in the directory
+    db_files = [f for f in os.listdir(date_dir) if f.endswith('.db')]
+    if not db_files:
+        return False
+        
+    print(f"[INFO] Found {len(db_files)} database files for {date}:")
+    
+    total_entries = 0
+    total_selected = 0
+    
+    for db_file in db_files:
+        db_path = os.path.join(date_dir, db_file)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM arxiv")
+        count = cursor.fetchone()[0]
+        total_entries += count
+        
+        # Check which column exists: 'reject' or 'relevant'
+        cursor.execute("PRAGMA table_info(arxiv)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'relevant' in columns:
+            # New column name
+            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE relevant = 1")
+        else:
+            # Old column name
+            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE reject = 1")
+            
+        selected = cursor.fetchone()[0]
+        total_selected += selected
+        
+        print(f"[INFO] {db_file}: {count} entries, {selected} selected papers")
+        
+        # Get first 3 entries sorted by title - handle both column names
+        if 'relevant' in columns:
+            cursor.execute("SELECT id, title FROM arxiv WHERE relevant = 1 ORDER BY title LIMIT 3")
+        else:
+            cursor.execute("SELECT id, title FROM arxiv WHERE reject = 1 ORDER BY title LIMIT 3")
+            
+        samples = cursor.fetchall()
+        
+        if samples:
+            print(f"[INFO] Sample papers from {db_file}:")
+            for paper_id, title in samples:
+                print(f"[INFO] - {title[:80]}... (ID: {paper_id})")
+        
+        conn.close()
+    
+    print(f"[INFO] Summary for {date}: {total_entries} total entries, {total_selected} selected papers")
+    return True
+
+def pull_papers(date=None):
+    """Pull papers from arxiv and store in DB"""
+    if date is None:
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    # Check if database already exists for this date
+    if check_existing_db(date):
+        return
+    
+    # If no directory or database exists for this date, proceed with pulling papers
+    print(f"[INFO] Pulling papers for date: {date}")
+    
+    # Create date directory if it doesn't exist
+    date_dir = f"./content/{date}"
+    if not os.path.exists(date_dir):
+        os.makedirs(date_dir)
+    
+    for sub_type in config.ARXIV_LIST['types']:
+        db_path = os.path.join(date_dir, f"{sub_type[3:]}.db")
+        conn, cursor = init_db(sub_type, db_path)
+        try:
+            entries = fetch_arxiv_entries(sub_type)
+            for entry in entries:
+                paper = process_paper(entry)
+                if paper:
+                    # Store all papers, with relevant flag from check_gpt
+                    relevant = check_gpt(paper.title, paper.summary, paper.comment)
+                    store_paper(cursor, paper, relevant, date)
+            conn.commit()
+        finally:
+            conn.close()
+
+def send_daily_email(date=None):
+    """Send email based on DB contents"""
+    if date is None:
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+    date_dir = f"./content/{date}"
+    if not os.path.exists(date_dir):
+        print(f"[ERROR] No database directory found for date: {date}")
+        return
+        
+    all_papers = []
+    db_files = [f for f in os.listdir(date_dir) if f.endswith('.db')]
+    
+    # Initialize statistics dictionary
+    stats = {
+        'total_retrieved': 0,
+        'total_selected': 0,
+        'by_type': {}
+    }
+    
+    for db_file in db_files:
+        db_path = os.path.join(date_dir, db_file)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Get the type name from the db file name
+        type_name = "cs." + db_file.replace('.db', '')
+        
+        # Check which column exists: 'reject' or 'relevant'
+        cursor.execute("PRAGMA table_info(arxiv)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM arxiv")
+        total_count = cursor.fetchone()[0]
+        stats['total_retrieved'] += total_count
+        
+        # Get selected papers count
+        if 'relevant' in columns:
+            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE relevant = 1")
+        else:
+            cursor.execute("SELECT COUNT(*) FROM arxiv WHERE reject = 1")
+        selected_count = cursor.fetchone()[0]
+        stats['total_selected'] += selected_count
+        
+        # Add type statistics
+        stats['by_type'][type_name] = {
+            'retrieved': total_count,
+            'selected': selected_count
+        }
+        
+        # Get papers where relevant=1 (or reject=1 for older DBs)
+        if 'relevant' in columns:
+            cursor.execute("SELECT * FROM arxiv WHERE relevant = 1")
+        else:
+            cursor.execute("SELECT * FROM arxiv WHERE reject = 1")
+            
+        papers = cursor.fetchall()
+
+
+        
+        for paper_data in papers:
+            paper = create_paper_object(paper_data)
+            all_papers.append(paper)
+            
+        conn.close()
+    
+    if all_papers:
+        print(f"[INFO] Found {len(all_papers)} papers to include in email")
+        ranked_papers = rank_and_summarize_papers(all_papers)
+        # Pass the stats parameter to send_email
+        send_email(ranked_papers, stats=stats)
+    else:
+        print(f"[INFO] No papers found for date: {date}")
+
+def create_paper_object(db_row):
+    """Create a paper object from DB row"""
+    # Create an object that mimics the arxiv paper object
+    class Paper:
+        pass
+    
+    paper = Paper()
+    
+    # Debug what fields are available in the paper_data
+    print(f"[DEBUG] Fields in paper_data: {db_row}")
+    
+    # Handle different database schemas based on the number of columns
+    if len(db_row) >= 9:  # New schema with 9 columns (including institutions)
+        (paper.entry_id, paper.title, paper.summary, paper.comment, 
+         authors_str, institutions_str, categories_str, _, _) = db_row
+        
+        # Create author objects similar to arxiv API
+        class Author:
+            def __init__(self, name):
+                self.name = name
+                
+        paper.authors = [Author(name) for name in authors_str.split('|') if name] if authors_str else []
+        paper.institutions = institutions_str.split('|') if institutions_str else []
+        paper.categories = categories_str.split('|') if categories_str else []
+    else:
+        # Instead of trying to handle unknown schemas, provide a clear error message
+        print(f"[ERROR] Database row has unexpected number of fields: {len(db_row)}")
+        print(f"[ERROR] Expected 9 fields but got: {db_row}")
+        print(f"[ERROR] Using minimal fallback to prevent crash")
+        
+        # Set minimal required fields to prevent crashes
+        paper.entry_id = db_row[0] if len(db_row) > 0 else "unknown_id"
+        paper.title = db_row[1] if len(db_row) > 1 else "Unknown Title"
+        paper.summary = db_row[2] if len(db_row) > 2 else "No summary available"
+        paper.comment = db_row[3] if len(db_row) > 3 else ""
+        paper.authors = []
+        paper.institutions = []
+        paper.categories = []
+    
+    # Create author string for display
+    paper.author_str = ', '.join([author.name for author in paper.authors]) if hasattr(paper, 'authors') and paper.authors else "Unknown"
+    
+    return paper
 
 def arxiv_crawl():
     model_name = "deepseek-v3-241226"
