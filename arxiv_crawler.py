@@ -14,60 +14,80 @@ from loguru import logger
 import re
 
 #CREATE TABLE IF NOT EXISTS arxiv (id TEXT, title TEXT,abstract TEXT, PRIMARY KEY (id),UNIQUE (ID))
-def send_email(papers, stats=None):
-    environment = Environment(loader=FileSystemLoader("./"))
-    template = environment.get_template("arxiv.template")
-    
-    # Split papers into top papers and others
-    top_papers = [p for p in papers if hasattr(p, 'recommendation_reason')]
-    other_papers = [p for p in papers if not hasattr(p, 'recommendation_reason')]
-    
-    print(f"[DEBUG] Email will contain {len(top_papers)} top papers and {len(other_papers)} other papers")
-    
-    # Debug the first top paper if available
-    if top_papers:
-        print(f"[DEBUG] First top paper: {top_papers[0].title}")
-        print(f"[DEBUG] First top paper reason: {getattr(top_papers[0], 'recommendation_reason', 'No reason')}")
-    
-    # Generate email content
-    email_html = template.render(
-        papers=papers,
-        top_papers=top_papers,
-        other_papers=other_papers,
-        stats=stats
-    )
-    
-    # Debug print the content
-    print("=== Email Content Preview ===")
-    print(email_html)
-    print("===========================")
-    
-    for subscriber in config.ARXIV_LIST["subscriber"]:
-        smtp_server = config.SEND_EMAIL_SERVER
-        smtp_port = config.SEND_EMAIL_PORT
-        sender_email = config.SEND_EMAIL
-        sender_password = config.SEND_EMAIL_PASSWORD
-        receiver_email = subscriber["email"]
+def send_email(papers, stats=None, recipient_name=None, recipient_email=None):
+    """Send email with paper information"""
+    try:
+        # Get email credentials from config
+        smtp_server = getattr(config, 'SEND_EMAIL_SERVER', 'smtp.163.com')
+        smtp_port = getattr(config, 'SEND_EMAIL_PORT', 25)
+        username = getattr(config, 'SEND_EMAIL', '')
+        password = getattr(config, 'SEND_EMAIL_PASSWORD', '')
         
-        # Modify the email subject
-        current_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        subject = f"PaperDogV1[{current_date}]: New Papers from Arxiv Today"
+        # Check if we have credentials
+        if not username or not password:
+            logger.error("Missing email credentials in config (SEND_EMAIL and SEND_EMAIL_PASSWORD)")
+            return False
         
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = receiver_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(email_html, 'html'))
+        # Use provided recipient or default
+        if recipient_email is None:
+            # Try to get from config.ARXIV_LIST['subscriber']
+            try:
+                recipient = config.ARXIV_LIST['subscriber'][0]['email']
+            except (AttributeError, KeyError, IndexError):
+                logger.error("No recipient email provided and no default found in config")
+                return False
+        else:
+            recipient = recipient_email
         
-        try:
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
-            print(f'Email sent successfully to {receiver_email}')
-        except Exception as e:
-            print(f'Failed to send email: {e}')
-        finally:
-            server.quit()
+        # Set up the SMTP server
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(username, password)
+        
+        # Create message with new subject format
+        msg = MIMEMultipart('alternative')
+        today_date = datetime.datetime.now().strftime('%Y-%m-%d')
+        msg['Subject'] = f"PaperDogV1[{today_date}]: New Papers from Arxiv Today"
+        msg['From'] = username
+        msg['To'] = recipient
+        
+        # Separate papers into top papers and other papers
+        top_papers = []
+        other_papers = []
+        
+        for paper in papers:
+            # Check if the paper has a recommendation reason
+            if hasattr(paper, 'recommendation_reason') and paper.recommendation_reason:
+                top_papers.append(paper)
+            else:
+                other_papers.append(paper)
+        
+        # Load template
+        env = Environment(loader=FileSystemLoader('./'))
+        template = env.get_template('arxiv.template')
+        
+        # Render HTML content with recipient name if provided
+        html_content = template.render(
+            papers=papers,
+            top_papers=top_papers,
+            other_papers=other_papers,
+            date=today_date,
+            recipient_name=recipient_name if recipient_name else "ArXiv Reader",
+            stats=stats
+        )
+        
+        # Attach HTML content
+        msg.attach(MIMEText(html_content, 'html'))
+        
+        # Send email
+        server.sendmail(username, recipient, msg.as_string())
+        server.quit()
+        
+        logger.info(f"Email sent to {recipient} with {len(top_papers)} top papers and {len(other_papers)} other papers")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email: {str(e)}")
+        return False
 
 import openai
 from openai import OpenAI
@@ -253,9 +273,12 @@ def parse_recommendations(response_lines):
                 current_reason = []
 
             # Parse the index
-            idx, _ = line.split('|', 1)
+            idx, reason_start = line.split('|', 1)
             idx = int(idx.strip())
             top_indices.append(idx)
+            
+            # Start collecting the new reason
+            current_reason.append(reason_start.strip())
         else:
             # Collect reason lines
             current_reason.append(line.strip())
@@ -294,24 +317,42 @@ def rank_and_summarize_papers(papers, model_name="deepseek-v3-241226"):
     try:
         # Parse the response to get indices and reasons
         response_lines = chat_completion.choices[0].message.content.strip().split('\n')
-        print(f"[0222DEBUG] Check response lines: {response_lines}")
+        print(f"[DEBUG] Check response lines: {response_lines}")
 
         # Create a list to store all papers
         all_papers = papers.copy()  # Keep a copy of all papers
 
         top_indices, reasons = parse_recommendations(response_lines)
+        
+        # Debug output
+        print(f"[DEBUG] Top indices: {top_indices}")
+        print(f"[DEBUG] Reasons: {reasons}")
 
         # Add recommendation reasons to top papers
         for idx, reason in zip(top_indices, reasons):
             if idx < len(all_papers):
                 all_papers[idx].recommendation_reason = reason
                 print(f"[DEBUG] Added reason to paper {idx}: {reason[:30]}...")
+                
+                # Add author_str attribute for template rendering
+                authors = [author.name for author in all_papers[idx].authors]
+                all_papers[idx].author_str = ", ".join(authors)
+
+        # Add author_str to all papers for template rendering
+        for paper in all_papers:
+            if not hasattr(paper, 'author_str'):
+                authors = [author.name for author in paper.authors]
+                paper.author_str = ", ".join(authors)
 
         # Return all papers (some will have recommendation_reason attribute)
         return all_papers
 
     except Exception as e:
         print(f"[ERROR] Failed to rank papers: {e}")
+        # Add author_str to all papers for template rendering
+        for paper in papers:
+            authors = [author.name for author in paper.authors]
+            paper.author_str = ", ".join(authors)
         return papers  # Return original papers if ranking fails
 
 def init_master_db():
@@ -410,8 +451,6 @@ def fetch_arxiv_entries(sub_type):
     """Fetch entries from arxiv API"""
     try:
         # Get recent papers from the last few days
-        # The issue is here - config.ARXIV_LIST['types'] is a list, not a dictionary
-        # We need to construct the query differently
         
         # Construct the query based on the sub_type
         query = f"cat:{sub_type}"
@@ -695,4 +734,90 @@ def migrate_old_databases():
         logger.error(f"Error during migration: {str(e)}")
     finally:
         conn.close()
+    
+def publish_daily_email(date=None):
+    """Send email to all subscribers based on DB contents"""
+    if date is None:
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    # Connect to master database
+    db_path = "./content/papers.db"
+    if not os.path.exists(db_path):
+        logger.error(f"Master database not found at {db_path}")
+        return
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Initialize statistics dictionary
+    stats = {
+        'total_retrieved': 0,
+        'total_selected': 0,
+        'by_type': {}
+    }
+    
+    # Get statistics by type
+    cursor.execute("""
+        SELECT type_name, COUNT(*), SUM(CASE WHEN relevant = 1 THEN 1 ELSE 0 END)
+        FROM papers 
+        WHERE date_added = ?
+        GROUP BY type_name
+    """, (date,))
+    
+    type_stats = cursor.fetchall()
+    for type_name, total, selected in type_stats:
+        stats['total_retrieved'] += total
+        stats['total_selected'] += selected
+        stats['by_type'][type_name] = {
+            'retrieved': total,
+            'selected': selected
+        }
+    
+    # Get all relevant papers for the date
+    cursor.execute("""
+        SELECT * FROM papers 
+        WHERE date_added = ? AND relevant = 1
+    """, (date,))
+    
+    papers_data = cursor.fetchall()
+    conn.close()
+    
+    if not papers_data:
+        logger.info(f"No relevant papers found for date: {date}")
+        return
+    
+    # Create paper objects
+    all_papers = []
+    for paper_data in papers_data:
+        paper = create_paper_object(paper_data)
+        all_papers.append(paper)
+    
+    logger.info(f"Found {len(all_papers)} relevant papers for {date}")
+    
+    # Rank and summarize papers
+    ranked_papers = rank_and_summarize_papers(all_papers)
+    
+    # Get subscribers from config
+    subscribers = config.ARXIV_LIST.get('subscribers', [])
+    if not subscribers:
+        logger.warning("No subscribers found in config. Email will not be sent.")
+        return
+    
+    # Send email to each subscriber
+    for subscriber in subscribers:
+        subscriber_name = subscriber.get('name', 'Subscriber')
+        subscriber_email = subscriber.get('email')
+        
+        if not subscriber_email:
+            logger.warning(f"No email address for subscriber {subscriber_name}. Skipping.")
+            continue
+        
+        logger.info(f"Sending email to {subscriber_name} <{subscriber_email}>")
+        try:
+            send_email(ranked_papers, stats=stats, recipient_name=subscriber_name, recipient_email=subscriber_email)
+            logger.info(f"Email sent successfully to {subscriber_email}")
+        except Exception as e:
+            logger.error(f"Failed to send email to {subscriber_email}: {str(e)}")
+    
+    logger.info(f"Published email to {len(subscribers)} subscribers")
     

@@ -1,7 +1,7 @@
 import argparse
 import datetime
 import os
-from arxiv_crawler import pull_papers, send_daily_email, migrate_old_databases, init_master_db
+from arxiv_crawler import pull_papers, send_daily_email, migrate_old_databases, init_master_db, publish_daily_email
 from loguru import logger
 
 def setup_directories():
@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description='PaperDog: ArXiv Paper Crawler and Emailer')
     parser.add_argument('--pull', action='store_true', help='Only pull papers and build DB')
     parser.add_argument('--email', action='store_true', help='Only send email from existing DB')
+    parser.add_argument('--publish', action='store_true', help='Send email to all subscribers in config')
     parser.add_argument('--date', type=str, default=datetime.datetime.now().strftime("%Y-%m-%d"), 
                         help='Specify date (YYYY-MM-DD) for DB operations (defaults to today)')
     parser.add_argument('--migrate', action='store_true', help='Migrate old databases to new master database')
@@ -32,6 +33,9 @@ def main():
     elif args.email:
         logger.info(f"Sending email for date: {date}")
         send_daily_email(date)
+    elif args.publish:
+        logger.info(f"Publishing email to all subscribers for date: {date}")
+        publish_daily_email(date)
     else:
         # Default behavior: do both
         logger.info("Running complete workflow")

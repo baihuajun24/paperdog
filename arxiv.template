@@ -61,9 +61,13 @@
     }
   });
 </script>
+    <title>PaperDog Daily Digest</title>
 </head>
 <body>
-<p>Hi,</p>
+    <h1>PaperDogV1[{{ date }}]: New Papers from Arxiv Today</h1>
+    <p>Hello {{ recipient_name }},</p>
+    <p>Here are today's recommended papers from arXiv:</p>
+    <p>This is a daily digest of machine learning systems (MLSys) related papers from arXiv. If you have any suggestions, please reply to this email.</p>
 
 {% if papers %}
 
