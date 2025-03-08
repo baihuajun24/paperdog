@@ -124,27 +124,54 @@ def check_model_response(model_name):
     except Exception as e:
         print(f"Error checking model response: {e}")
 
-def check_gpt(title:str,summary:str, comment:str, model_name="deepseek-v3-241226"):
-    chat_completion = client.chat.completions.create(
-    messages=[
-        {
-            "role": "system",
-            "content": config.AGENT_PROMPT
-        },
-        {
-            "role": "user",
-            "content": config.CLASSIFY_PROMPT.format(title=title, summary=summary, comment=comment)
-        }
-    ],
-    # model="gpt-4o-mini-2024-07-18",
-    model=model_name,
-    max_tokens=100,
-    )
-    res=chat_completion.choices[0].message.content.lower()
-    assert 'no' in res or 'yes' in res
-    if('yes' in res):
-       return True
-    else:
+def check_gpt(title:str, summary:str, comment:str, model_name="deepseek-v3-241226"):
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": config.AGENT_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": config.CLASSIFY_PROMPT.format(title=title, summary=summary, comment=comment)
+                }
+            ],
+            # model="gpt-4o-mini-2024-07-18",
+            model=model_name,
+            max_tokens=100,
+        )
+        res = chat_completion.choices[0].message.content.lower()
+        
+        # Check if response contains yes or no
+        if 'yes' in res:
+            return True
+        elif 'no' in res:
+            return False
+        else:
+            # If response doesn't contain yes or no, make a best guess
+            logger.warning(f"Model didn't return clear yes/no for paper: {title}")
+            logger.warning(f"Model response: {res}")
+            
+            # Look for positive or negative sentiment
+            positive_words = ['relevant', 'improve', 'system', 'throughput', 'latency', 'performance', 'efficient']
+            negative_words = ['not relevant', 'accuracy', 'precision', 'not aimed', 'doesn\'t aim', 'does not aim']
+            
+            # Count positive and negative indicators
+            positive_count = sum(1 for word in positive_words if word in res)
+            negative_count = sum(1 for word in negative_words if word in res)
+            
+            # Make decision based on sentiment analysis
+            if positive_count > negative_count:
+                logger.info(f"Guessing YES based on sentiment analysis for: {title}")
+                return True
+            else:
+                logger.info(f"Guessing NO based on sentiment analysis for: {title}")
+                return False
+    except Exception as e:
+        logger.error(f"Error in check_gpt: {e}")
+        logger.error(f"Failed paper: {title}")
+        # In case of error, skip this paper
         return False
     
 session = requests.Session()
@@ -361,149 +388,206 @@ def init_master_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Create the main papers table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS papers (
-            id TEXT,
-            title TEXT,
-            abstract TEXT,
-            comment TEXT,
-            authors TEXT,
-            institutions TEXT,
-            categories TEXT,
-            type_name TEXT,
-            published_date DATE,
-            date_added DATE,
-            relevant BOOL DEFAULT 0,
-            PRIMARY KEY (id, type_name)
-        )
-    """)
+    # Check if the table exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='papers'")
+    table_exists = cursor.fetchone()
     
-    # Create indexes for efficient querying
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_published_date ON papers(published_date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_type_name ON papers(type_name)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_relevant ON papers(relevant)")
+    if table_exists:
+        # Get the current schema
+        cursor.execute("PRAGMA table_info(papers)")
+        columns = [col[1] for col in cursor.fetchall()]
+        logger.debug(f"Current papers table columns: {columns}")
+        
+        # Check if we need to rename id to entry_id or vice versa
+        if 'id' in columns and 'entry_id' not in columns:
+            logger.warning("Found 'id' column but no 'entry_id' column. Using 'id' for compatibility.")
+        elif 'entry_id' in columns and 'id' not in columns:
+            logger.warning("Found 'entry_id' column but no 'id' column. Using 'entry_id' for compatibility.")
+    else:
+        # Create the main papers table with both id and entry_id for compatibility
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS papers (
+                id TEXT,
+                entry_id TEXT,
+                title TEXT,
+                abstract TEXT,
+                comment TEXT,
+                authors TEXT,
+                institutions TEXT,
+                id TEXT,
+                entry_id TEXT,
+                title TEXT,
+                abstract TEXT,
+                comment TEXT,
+                authors TEXT,
+                institutions TEXT,
+                categories TEXT,
+                type_name TEXT,
+                published_date DATE,
+                updated_date DATE,
+                date_added DATE,
+                relevant BOOL DEFAULT 0,
+                PRIMARY KEY (id, type_name)
+            )
+        """)
+        
+        # Create indexes for efficient querying
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_published_date ON papers(published_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_type_name ON papers(type_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_relevant ON papers(relevant)")
+        
+        logger.info("Created papers table with updated schema")
     
     conn.commit()
     return conn, cursor
 
 def paper_exists(cursor, paper_id, type_name):
     """Check if a paper already exists in the database"""
-    cursor.execute(
-        "SELECT COUNT(*) FROM papers WHERE id = ? AND type_name = ?", 
-        (paper_id, type_name)
-    )
+    # Check if the table has entry_id or id column
+    cursor.execute("PRAGMA table_info(papers)")
+    columns = [col[1] for col in cursor.fetchall()]
+    
+    if 'entry_id' in columns:
+        cursor.execute(
+            "SELECT COUNT(*) FROM papers WHERE entry_id = ? AND type_name = ?", 
+            (paper_id, type_name)
+        )
+    elif 'id' in columns:
+        cursor.execute(
+            "SELECT COUNT(*) FROM papers WHERE id = ? AND type_name = ?", 
+            (paper_id, type_name)
+        )
+    else:
+        logger.error("Neither 'id' nor 'entry_id' column found in papers table")
+        return False
+        
     return cursor.fetchone()[0] > 0
 
-def store_paper(cursor, paper, type_name, relevant):
-    """Store paper information in the master database"""
-    try:
-        # Extract authors
-        authors = [author.name for author in paper.authors]
-        authors_str = '|'.join(authors)
-        
-        # Extract institutions if available
-        institutions = []
-        if hasattr(paper, 'affiliations'):
-            institutions = paper.affiliations
-        elif hasattr(paper, 'authors') and hasattr(paper.authors[0], 'affiliation'):
-            institutions = [getattr(author, 'affiliation', '') for author in paper.authors]
-        institutions_str = '|'.join(institutions)
-        
-        # Extract categories
-        categories = paper.categories if hasattr(paper, 'categories') else []
-        categories_str = '|'.join(categories)
-        
-        # Get published date
-        published_date = None
-        if hasattr(paper, 'published'):
-            published_date = paper.published.strftime("%Y-%m-%d")
-        
-        # Current date for date_added
+def store_paper(cursor, paper, type_name, relevant, date_added=None):
+    """Store paper in database"""
+    if date_added is None:
         date_added = datetime.datetime.now().strftime("%Y-%m-%d")
         
-        # Insert paper into database
+    # Convert authors to string
+    authors_str = ", ".join([author.name for author in paper.authors])
+    
+    # Convert categories to string
+    categories_str = ", ".join(paper.categories)
+    
+    # Check if the table has entry_id or id column
+    cursor.execute("PRAGMA table_info(papers)")
+    columns = [col[1] for col in cursor.fetchall()]
+    
+    # Determine which columns to use
+    has_id = 'id' in columns
+    has_entry_id = 'entry_id' in columns
+    
+    if has_id and has_entry_id:
+        # If both columns exist, use both
         cursor.execute("""
-            INSERT OR REPLACE INTO papers 
-            (id, title, abstract, comment, authors, institutions, categories, 
-             type_name, published_date, date_added, relevant)
+            INSERT OR IGNORE INTO papers 
+            (id, entry_id, title, abstract, comment, authors, categories, 
+             type_name, published_date, updated_date, date_added, relevant)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            paper.entry_id,
+            paper.entry_id,
+            paper.title,
+            paper.summary,
+            paper.comment,
+            authors_str,
+            categories_str,
+            type_name,
+            paper.published.strftime("%Y-%m-%d"),
+            paper.updated.strftime("%Y-%m-%d"),
+            date_added,
+            1 if relevant else 0
+        ))
+    elif has_entry_id:
+        # If only entry_id exists
+        cursor.execute("""
+            INSERT OR IGNORE INTO papers 
+            (entry_id, title, abstract, comment, authors, categories, 
+             type_name, published_date, updated_date, date_added, relevant)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             paper.entry_id,
             paper.title,
             paper.summary,
-            getattr(paper, 'comment', ''),
+            paper.comment,
             authors_str,
-            institutions_str,
             categories_str,
             type_name,
-            published_date,
+            paper.published.strftime("%Y-%m-%d"),
+            paper.updated.strftime("%Y-%m-%d"),
             date_added,
             1 if relevant else 0
         ))
-        logger.debug(f"Stored paper in DB: {paper.title}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to store paper: {str(e)}")
-        return False
+    elif has_id:
+        # If only id exists
+        cursor.execute("""
+            INSERT OR IGNORE INTO papers 
+            (id, title, abstract, comment, authors, categories, 
+             type_name, published_date, updated_date, date_added, relevant)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            paper.entry_id,
+            paper.title,
+            paper.summary,
+            paper.comment,
+            authors_str,
+            categories_str,
+            type_name,
+            paper.published.strftime("%Y-%m-%d"),
+            paper.updated.strftime("%Y-%m-%d"),
+            date_added,
+            1 if relevant else 0
+        ))
+    else:
+        logger.error("Neither 'id' nor 'entry_id' column found in papers table")
+        return
+    
+    logger.info(f"Stored paper: {paper.title} (Relevant: {relevant})")
 
-def fetch_arxiv_entries(sub_type):
-    """Fetch entries from arxiv API"""
+def fetch_arxiv_entries(sub_type, start_date=None, end_date=None):
+    """Fetch entries from arxiv for a specific type and date range"""
     try:
-        # Get recent papers from the last few days
+        # If no dates provided, use yesterday to today
+        if start_date is None:
+            # Get yesterday's date
+            yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+            start_date = yesterday.replace(hour=0, minute=0, second=0)
         
-        # Construct the query based on the sub_type
-        query = f"cat:{sub_type}"
+        if end_date is None:
+            # Get today's date
+            end_date = datetime.datetime.now()
         
+        # Format dates for arXiv API
+        start_date_str = start_date.strftime('%Y%m%d%H%M%S')
+        end_date_str = end_date.strftime('%Y%m%d%H%M%S')
+        
+        # Create date range query
+        date_query = f"submittedDate:[{start_date_str} TO {end_date_str}]"
+        
+        # Combine with category query
+        query = f"cat:{sub_type} AND {date_query}"
+        
+        logger.info(f"Fetching papers with query: {query}")
+        
+        # Use the arXiv API to search for papers
         search = arxiv.Search(
             query=query,
-            max_results=config.ARXIV_LIST.get('max_results', 100),
+            max_results=1000,
             sort_by=arxiv.SortCriterion.SubmittedDate
         )
         
-        # Collect all entries
-        entries = []
-        for result in search.results():
-            entries.append(result)
-            
-        logger.info(f"Retrieved {len(entries)} papers for {sub_type}")
-        return entries
+        # Fetch the results
+        results = list(search.results())
+        logger.warning(f"Found {len(results)} papers for {sub_type} between {start_date_str} and {end_date_str}")
         
+        return results
     except Exception as e:
-        logger.error(f"Failed to fetch arxiv listings: {str(e)}")
-        
-        # If we have a list of paper IDs to fetch, split them into smaller batches
-        if 'id_list' in str(e) and '414' in str(e):
-            logger.warning("Request URI too long. Splitting into smaller batches.")
-            
-            # Extract paper IDs from the error message
-            error_msg = str(e)
-            start_idx = error_msg.find('id_list=') + 8
-            end_idx = error_msg.find('&sortBy')
-            if start_idx > 8 and end_idx > start_idx:
-                id_list_str = error_msg[start_idx:end_idx]
-                paper_ids = id_list_str.split('%2C')
-                
-                # Process in batches of 50
-                batch_size = 50
-                entries = []
-                
-                for i in range(0, len(paper_ids), batch_size):
-                    batch_ids = paper_ids[i:i+batch_size]
-                    try:
-                        logger.info(f"Fetching batch {i//batch_size + 1}/{(len(paper_ids) + batch_size - 1)//batch_size}")
-                        batch_search = arxiv.Search(
-                            id_list=batch_ids,
-                            max_results=batch_size
-                        )
-                        for result in batch_search.results():
-                            entries.append(result)
-                    except Exception as batch_error:
-                        logger.error(f"Failed to fetch batch {i//batch_size + 1}: {str(batch_error)}")
-                
-                logger.info(f"Retrieved {len(entries)} papers for {sub_type} after batching")
-                return entries
-        
+        logger.error(f"Error fetching arxiv entries: {e}")
         return []
 
 def process_paper(paper):
@@ -519,7 +603,7 @@ def process_paper(paper):
         print(f"[ERROR] Failed to process paper: {str(e)}")
         return None
 
-def pull_papers(date=None):
+def pull_papers(date=None, start_date=None, end_date=None):
     """Pull papers from arxiv and store in master DB"""
     if date is None:
         date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -528,27 +612,52 @@ def pull_papers(date=None):
     conn, cursor = init_master_db()
     
     try:
-        logger.info(f"Pulling papers for date: {date}")
+        # If no date range specified, use yesterday to today
+        if start_date is None or end_date is None:
+            today = datetime.datetime.now()
+            yesterday = today - datetime.timedelta(days=1)
+            
+            # Set start time to yesterday at 00:00:00
+            start_date = yesterday.replace(hour=0, minute=0, second=0)
+            
+            # Set end time to today at current time
+            end_date = today
+        
+        logger.info(f"Fetching papers from {start_date} to {end_date}")
+        logger.info(f"Papers will be stored with date_added: {date}")
         
         for sub_type in config.ARXIV_LIST['types']:
             logger.info(f"Processing {sub_type}")
-            entries = fetch_arxiv_entries(sub_type)
+            entries = fetch_arxiv_entries(sub_type, start_date, end_date)
             
             for entry in entries:
-                # Check if paper exists in database
-                if paper_exists(cursor, entry.entry_id, sub_type):
-                    logger.info(f"Paper already exists: {entry.title}")
+                try:
+                    # Check if paper exists in database
+                    if paper_exists(cursor, entry.entry_id, sub_type):
+                        logger.info(f"Paper already exists: {entry.title}")
+                        continue
+                    
+                    # Process paper
+                    paper = process_paper(entry)
+                    if paper:
+                        # Check if paper is relevant
+                        try:
+                            relevant = check_gpt(paper.title, paper.summary, paper.comment)
+                        except Exception as e:
+                            logger.error(f"Error checking relevance: {e}")
+                            # Skip to next paper on error
+                            continue
+                            
+                        # Store paper
+                        store_paper(cursor, paper, sub_type, relevant, date_added=date)
+                except Exception as e:
+                    logger.error(f"Error processing paper {entry.entry_id}: {e}")
+                    # Continue with next paper
                     continue
-                
-                # Process paper
-                paper = process_paper(entry)
-                if paper:
-                    # Check if paper is relevant
-                    relevant = check_gpt(paper.title, paper.summary, paper.comment)
-                    # Store paper
-                    store_paper(cursor, paper, sub_type, relevant)
             
             conn.commit()
+    except Exception as e:
+        logger.error(f"Error in pull_papers: {e}")
     finally:
         conn.close()
 

@@ -1,6 +1,44 @@
 # paperdog
 daily arxiv paper news feed by email
 
+
+## Recent Update on 2025-03-08
+- I noticed categories have | in them, how would these affect relevance and summarizaiton?
+```
+rimary_category     paper_count  relevant_count  relevance_percentage
+-------------------  -----------  --------------  --------------------
+cs.CL                914          58              6.35                
+cs.CL|cs.AI          748          58              7.75                
+cs.LG|cs.AI          541          53              9.8                 
+cs.LG                525          43              8.19                
+cs.DC                508          166             32.68               
+cs.CL|cs.AI|cs.LG    355          70              19.72               
+cs.LG|cs.AI|cs.CL    250          39              15.6                
+cs.CL|cs.LG          172          23              13.37               
+cs.CV|cs.AI          126          8               6.35                
+cs.AI                126          3               2.38                
+cs.LG|cs.CL          113          19              16.81               
+cs.CV|cs.LG          84           4               4.76                
+cs.LG|stat.ML        83           2               2.41                
+cs.AI|cs.LG          82           5               6.1                 
+cs.AI|cs.CL          81           5               6.17                
+cs.LG|cs.DC          80           45              56.25               
+stat.ML|cs.LG        72           0               0.0                 
+                     65           65              100.0               
+cs.CV|cs.AI|cs.LG    59           9               15.25               
+cs.DC|cs.LG          57           40              70.18               
+cs.DC|cs.AI          55           38              69.09               
+cs.LG|cs.AI|cs.CV    52           7               13.46               
+cs.CR|cs.DC          50           3               6.0                 
+cs.LG|cs.AI|stat.ML  48           0               0.0                 
+cs.CV|cs.AI|cs.CL    43           3               6.98                
+cs.CR|cs.AI          39           0               0.0                 
+cs.LG|cs.CV          36           3               8.33                
+cs.AI|cs.CL|cs.LG    35           3               8.57                
+cs.DC|cs.AI|cs.LG    34           28              82.35               
+cs.RO|cs.AI|cs.LG    31           2               6.45    
+```
+
 ## Recent Updates (2025-02-25)
 - [x] Completely refactored database structure:
   - Moved from date-based directory structure to a single consolidated database
